@@ -88,8 +88,10 @@
   .status-scheduled{background:#1e3a8a;color:#bfdbfe;}
   .status-posted{background:#4c1d95;color:#ddd6fe;}
 
-  .card-wrap{position:relative;cursor:pointer;transition:transform .15s ease;}
+  .card-wrap{position:relative;cursor:grab;transition:transform .15s ease, opacity .15s ease;}
   .card-wrap:hover{transform:translateY(-2px);}
+  .card-wrap.dragging{opacity:0.35;cursor:grabbing;}
+  .card-wrap .drag-handle{position:absolute;top:10px;left:10px;z-index:6;background:rgba(0,0,0,0.55);color:#fff;width:22px;height:22px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:12px;letter-spacing:-1px;cursor:grab;}
   .card-meta-line{margin-top:8px;font-size:11.5px;color:var(--text-dim);display:flex;justify-content:space-between;}
 
   /* ---------- Instagram mockup ---------- */
@@ -180,6 +182,12 @@
   .seg{display:flex;border:1px solid var(--border);border-radius:8px;overflow:hidden;}
   .seg button{flex:1;padding:8px;background:var(--panel-2);color:var(--text-dim);border:none;font-size:12.5px;font-weight:600;}
   .seg button.active{background:var(--accent);color:#fff;}
+  .crosspost-options{display:flex;flex-wrap:wrap;gap:8px 16px;margin-bottom:4px;}
+  .cp-check{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text);cursor:pointer;}
+  .cp-check input{cursor:pointer;}
+  .cp-check.linked{color:var(--text-dim);}
+  .cp-linked-tag{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.03em;color:var(--accent);}
+  .cp-caption-mode{margin-top:10px;padding-top:10px;border-top:1px solid var(--border);}
   .file-drop{border:1.5px dashed var(--border);border-radius:10px;padding:16px;text-align:center;color:var(--text-dim);font-size:12.5px;}
   .file-drop input{display:none;}
   .media-dropzone{border:1.5px dashed var(--border);border-radius:10px;padding:22px 16px;text-align:center;color:var(--text-dim);font-size:12.5px;cursor:pointer;transition:border-color .15s ease, background .15s ease;margin-bottom:8px;}
@@ -468,6 +476,34 @@ function guessTypeFromMime(mime){
   return mime.startsWith('video') ? 'video' : 'image';
 }
 
+// Reads the real pixel dimensions of a file locally (before/while it uploads) so cards
+// can auto-fit portrait/square/landscape media instead of always forcing a square crop.
+function getMediaDimensions(file){
+  return new Promise((resolve)=>{
+    const url = URL.createObjectURL(file);
+    let done = false;
+    const finish = (result)=>{
+      if(done) return;
+      done = true;
+      URL.revokeObjectURL(url);
+      resolve(result);
+    };
+    const timeout = setTimeout(()=> finish(null), 4000);
+    if((file.type||'').startsWith('video')){
+      const v = document.createElement('video');
+      v.preload = 'metadata';
+      v.onloadedmetadata = ()=>{ clearTimeout(timeout); finish({ width:v.videoWidth, height:v.videoHeight }); };
+      v.onerror = ()=>{ clearTimeout(timeout); finish(null); };
+      v.src = url;
+    } else {
+      const img = new Image();
+      img.onload = ()=>{ clearTimeout(timeout); finish({ width:img.naturalWidth, height:img.naturalHeight }); };
+      img.onerror = ()=>{ clearTimeout(timeout); finish(null); };
+      img.src = url;
+    }
+  });
+}
+
 /* ============ INIT ============ */
 async function init(){
   renderCompanyTabs();
@@ -576,15 +612,85 @@ function renderPreviz(){
   grid.innerHTML = posts.map(p => renderCardWrap(p, company)).join('');
   $all('.card-wrap', grid).forEach(el=>{
     el.addEventListener('click', (e)=>{
-      if(e.target.closest('.car-nav') || e.target.closest('.car-dot')) return;
+      if(e.target.closest('.car-nav') || e.target.closest('.car-dot') || justDragged) return;
       openEditor(el.dataset.id);
     });
   });
   bindCarouselControls(grid);
+  bindDragReorder(grid);
+}
+
+let justDragged = false;
+
+function bindDragReorder(grid){
+  $all('.card-wrap', grid).forEach(card=>{
+    card.addEventListener('dragstart', (e)=>{
+      card.classList.add('dragging');
+      e.dataTransfer.effectAllowed = 'move';
+      try{ e.dataTransfer.setData('text/plain', card.dataset.id); }catch(err){}
+    });
+    card.addEventListener('dragend', ()=>{
+      card.classList.remove('dragging');
+      persistCardOrder(grid);
+      justDragged = true;
+      setTimeout(()=>{ justDragged = false; }, 50);
+    });
+    card.addEventListener('dragover', (e)=>{
+      e.preventDefault();
+      const dragging = grid.querySelector('.dragging');
+      if(!dragging || dragging === card) return;
+      const rect = card.getBoundingClientRect();
+      const midX = rect.left + rect.width/2;
+      const midY = rect.top + rect.height/2;
+      const after = e.clientY > midY || (Math.abs(e.clientY - midY) < rect.height*0.25 && e.clientX > midX);
+      if(after) card.parentNode.insertBefore(dragging, card.nextSibling);
+      else card.parentNode.insertBefore(dragging, card);
+    });
+  });
+}
+
+async function persistCardOrder(grid){
+  const ids = $all('.card-wrap', grid).map(el=>el.dataset.id);
+  const jobs = [];
+  ids.forEach((id, idx)=>{
+    const post = state.posts.find(p=>p.id===id);
+    if(post && post.sort_order !== idx){
+      post.sort_order = idx;
+      jobs.push(updatePost(id, { sort_order: idx }).catch(err=>console.error(err)));
+    }
+  });
+  if(jobs.length){
+    await Promise.all(jobs);
+    showToast('Order saved');
+  }
 }
 
 function mediaItemsOf(post){
   return Array.isArray(post.media_items) ? post.media_items : [];
+}
+
+function activeMediaItem(post){
+  const items = mediaItemsOf(post);
+  if(items.length === 0) return null;
+  const idx = Math.min(state.carouselIndex[post.id] || 0, items.length - 1);
+  return items[idx];
+}
+
+function clampAspect(ratio, kind){
+  if(!ratio || !isFinite(ratio) || ratio <= 0) ratio = 1;
+  if(kind === 'ig' || kind === 'li'){
+    return Math.max(0.8, Math.min(1.91, ratio));
+  }
+  return ratio;
+}
+
+// Auto-fit the mockup frame to the media's real orientation (portrait/square/landscape),
+// clamped to what that platform actually allows. YouTube and vertical formats stay fixed.
+function mediaAspectStyle(post, kind){
+  if(kind !== 'ig' && kind !== 'li') return '';
+  const item = activeMediaItem(post);
+  const ratio = (item && item.ratio) ? item.ratio : 1;
+  return `aspect-ratio:${clampAspect(ratio, kind)};`;
 }
 
 function renderCardWrap(post, company){
@@ -600,12 +706,15 @@ function renderCardWrap(post, company){
   if(items.length === 1) mediaLabel = items[0].type === 'link' ? '🔗 link' : '📎 media';
   else if(items.length > 1) mediaLabel = `📎 ${items.length} slides`;
 
+  const linkedBadge = post.group_id ? `<span title="Cross-posted with other platforms">🔗</span>` : '';
+
   return `
-    <div class="card-wrap" data-id="${post.id}">
+    <div class="card-wrap" data-id="${post.id}" draggable="true">
+      <span class="drag-handle" title="Drag to reorder">⠿</span>
       <span class="status-badge status-${post.status}">${STATUS_LABEL[post.status]}</span>
       ${inner}
       <div class="card-meta-line">
-        <span>${post.scheduled_date ? 'Scheduled ' + fmtDate(post.scheduled_date) : 'No date set'}</span>
+        <span>${post.scheduled_date ? 'Scheduled ' + fmtDate(post.scheduled_date) : 'No date set'} ${linkedBadge}</span>
         <span>${mediaLabel}</span>
       </div>
     </div>
@@ -671,11 +780,12 @@ function renderFeedOnly(){
   grid.innerHTML = posts.map(p => renderCardWrap(p, company)).join('');
   $all('.card-wrap', grid).forEach(el=>{
     el.addEventListener('click', (e)=>{
-      if(e.target.closest('.car-nav') || e.target.closest('.car-dot')) return;
+      if(e.target.closest('.car-nav') || e.target.closest('.car-dot') || justDragged) return;
       openEditor(el.dataset.id);
     });
   });
   bindCarouselControls(grid);
+  bindDragReorder(grid);
 }
 
 function renderIgCard(post, company){
@@ -686,7 +796,7 @@ function renderIgCard(post, company){
         <div class="ig-handle">${company.handle}</div>
         <div class="ig-more">•••</div>
       </div>
-      <div class="ig-media">${renderMediaSlides(post)}</div>
+      <div class="ig-media" style="${mediaAspectStyle(post,'ig')}">${renderMediaSlides(post)}</div>
       <div class="ig-actions">♡ <span>💬</span> <span>➤</span><span class="spacer"></span> 🔖</div>
       <div class="ig-likes">${post.status==='posted' ? 'View insights' : 'Preview — not yet posted'}</div>
       <div class="ig-caption"><b>${company.handle}</b>${escapeHtml(post.caption || '(no caption yet)')} <span class="hashtags">${escapeHtml(post.hashtags||'')}</span></div>
@@ -738,7 +848,7 @@ function renderLiCard(post, company){
         </div>
       </div>
       <div class="li-text">${escapeHtml(post.caption || '(no caption yet)')}</div>
-      <div class="li-media">${renderMediaSlides(post)}</div>
+      <div class="li-media" style="${mediaAspectStyle(post,'li')}">${renderMediaSlides(post)}</div>
       <div class="li-actions"><span>👍 Like</span><span>💬 Comment</span><span>↪ Repost</span><span>✉ Send</span></div>
     </div>
   `;
@@ -770,7 +880,9 @@ function openEditor(id){
     status: 'idea',
     caption: '', hashtags: '', media_items: [],
     thumbnail_url: null, post_url: '', scheduled_date: '', notes: '',
+    group_id: null,
   };
+  const otherPlatforms = company.platforms.filter(p => p !== draft.platform);
 
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay';
@@ -821,6 +933,28 @@ function openEditor(id){
         <label>Hashtags</label>
         <input type="text" id="f_hashtags" placeholder="#filmmaking #bts #originpoint" value="${escapeHtml(draft.hashtags||'')}">
       </div>
+
+      ${otherPlatforms.length ? `
+      <div class="field">
+        <label>Also post this to (reuses the same media — no re-upload)</label>
+        <div class="crosspost-options">
+          ${otherPlatforms.map(p=>{
+            const linked = draft.group_id && state.posts.some(sp => sp.group_id === draft.group_id && sp.platform === p && sp.id !== draft.id);
+            return `<label class="cp-check ${linked?'linked':''}">
+              <input type="checkbox" class="cp-platform-check" value="${p}" ${linked?'checked disabled':''}>
+              ${PLATFORM_META[p].label}${linked?' <span class="cp-linked-tag">linked</span>':''}
+            </label>`;
+          }).join('')}
+        </div>
+        <div class="cp-caption-mode" id="cpCaptionModeWrap" style="display:none;">
+          <div class="seg" id="captionModeSeg">
+            <button type="button" data-mode="same" class="active">Same caption everywhere</button>
+            <button type="button" data-mode="custom">Custom caption per platform</button>
+          </div>
+          <div id="cpCaptionFields"></div>
+        </div>
+      </div>
+      ` : ''}
 
       <div class="row2">
         <div class="field">
@@ -916,8 +1050,12 @@ function openEditor(id){
     for(const file of files){
       statusEl.textContent = `Uploading ${done + failed + 1} of ${files.length}… (${file.name})`;
       try{
-        const { publicUrl } = await uploadToStorage(file, `${draft.company_id}/${draft.platform}`);
-        mediaItems.push({ type:'upload', url: publicUrl, media_type: guessTypeFromMime(file.type), file_name: file.name });
+        const [{ publicUrl }, dims] = await Promise.all([
+          uploadToStorage(file, `${draft.company_id}/${draft.platform}`),
+          getMediaDimensions(file)
+        ]);
+        const ratio = (dims && dims.width && dims.height) ? dims.width / dims.height : null;
+        mediaItems.push({ type:'upload', url: publicUrl, media_type: guessTypeFromMime(file.type), file_name: file.name, ratio });
         renderMediaList();
         done++;
       }catch(err){
@@ -971,6 +1109,45 @@ function openEditor(id){
     }
   });
 
+  let captionMode = 'same';
+  const customCaptions = {};
+  if(otherPlatforms.length){
+    const cpWrap = $('#cpCaptionModeWrap', overlay);
+    function checkedUnlockedPlatforms(){
+      return $all('.cp-platform-check', overlay).filter(cb => cb.checked && !cb.disabled).map(cb => cb.value);
+    }
+    function renderCpCaptionFields(){
+      const fieldsWrap = $('#cpCaptionFields', overlay);
+      const checked = checkedUnlockedPlatforms();
+      const anyChecked = checked.length > 0;
+      cpWrap.style.display = anyChecked ? 'block' : 'none';
+      if(captionMode !== 'custom' || !anyChecked){
+        fieldsWrap.innerHTML = '';
+        return;
+      }
+      fieldsWrap.innerHTML = checked.map(p => `
+        <div class="field" style="margin-top:10px;">
+          <label>${PLATFORM_META[p].label} caption</label>
+          <textarea class="cp-caption-input" data-platform="${p}" placeholder="Caption for ${PLATFORM_META[p].label}...">${escapeHtml(customCaptions[p] != null ? customCaptions[p] : ($('#f_caption', overlay).value||''))}</textarea>
+        </div>
+      `).join('');
+      $all('.cp-caption-input', fieldsWrap).forEach(ta=>{
+        ta.addEventListener('input', ()=>{ customCaptions[ta.dataset.platform] = ta.value; });
+      });
+    }
+    $all('.cp-platform-check', overlay).forEach(cb=>{
+      cb.addEventListener('change', renderCpCaptionFields);
+    });
+    $all('#captionModeSeg button', overlay).forEach(btn=>{
+      btn.addEventListener('click', ()=>{
+        captionMode = btn.dataset.mode;
+        $all('#captionModeSeg button', overlay).forEach(b=>b.classList.toggle('active', b===btn));
+        renderCpCaptionFields();
+      });
+    });
+    renderCpCaptionFields();
+  }
+
   if(!isNew){
     $('#deleteBtn', overlay).addEventListener('click', async ()=>{
       if(!confirm('Delete this post? This cannot be undone.')) return;
@@ -985,17 +1162,29 @@ function openEditor(id){
   }
 
   $('#saveBtn', overlay).addEventListener('click', async ()=>{
+    const mainCaption = $('#f_caption', overlay).value;
+    const mainHashtags = $('#f_hashtags', overlay).value;
+    const mainStatus = $('#f_status', overlay).value;
+    const mainDate = $('#f_date', overlay).value || null;
+    const mainNotes = $('#f_notes', overlay).value;
+
+    const crossPlatforms = otherPlatforms.length
+      ? $all('.cp-platform-check', overlay).filter(cb => cb.checked && !cb.disabled).map(cb => cb.value)
+      : [];
+    const groupId = (draft.group_id) || (crossPlatforms.length ? crypto.randomUUID() : null);
+
     const payload = {
       company_id: draft.company_id,
       platform: draft.platform,
-      status: $('#f_status', overlay).value,
-      caption: $('#f_caption', overlay).value,
-      hashtags: $('#f_hashtags', overlay).value,
+      status: mainStatus,
+      caption: mainCaption,
+      hashtags: mainHashtags,
       media_items: mediaItems,
       thumbnail_url: pendingThumbUrl,
       post_url: $('#f_posturl', overlay).value,
-      scheduled_date: $('#f_date', overlay).value || null,
-      notes: $('#f_notes', overlay).value,
+      scheduled_date: mainDate,
+      notes: mainNotes,
+      group_id: groupId,
     };
     $('#saveBtn', overlay).disabled = true;
     $('#saveBtn', overlay).textContent = 'Saving…';
@@ -1008,9 +1197,33 @@ function openEditor(id){
         const idx = state.posts.findIndex(p=>p.id===post.id);
         state.posts[idx] = updated;
       }
+
+      if(crossPlatforms.length){
+        for(const p of crossPlatforms){
+          const siblingCaption = captionMode === 'custom' && customCaptions[p] != null ? customCaptions[p] : mainCaption;
+          const siblingPayload = {
+            company_id: draft.company_id,
+            platform: p,
+            status: mainStatus,
+            caption: siblingCaption,
+            hashtags: mainHashtags,
+            media_items: mediaItems,
+            thumbnail_url: pendingThumbUrl,
+            post_url: '',
+            scheduled_date: mainDate,
+            notes: mainNotes,
+            group_id: groupId,
+          };
+          try{
+            const sib = await createPost(siblingPayload);
+            state.posts.unshift(sib);
+          }catch(err){ console.error(err); }
+        }
+      }
+
       overlay.remove();
       renderAll();
-      showToast('Saved');
+      showToast(crossPlatforms.length ? `Saved and cross-posted to ${crossPlatforms.length} more platform${crossPlatforms.length===1?'':'s'}` : 'Saved');
     }catch(err){
       console.error(err);
       $('#saveBtn', overlay).disabled = false;
