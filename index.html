@@ -1,0 +1,1393 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Content Command Center</title>
+<style>
+  :root{
+    --bg:#0f1115;
+    --panel:#171a21;
+    --panel-2:#1e2230;
+    --border:#2a2f3d;
+    --text:#e8eaf0;
+    --text-dim:#9aa1b2;
+    --accent:#6366f1;
+    --op:#2563eb;
+    --bs:#ea580c;
+    --bt1:#0d9488;
+    --radius:14px;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--text);min-height:100vh;}
+  a{color:inherit;}
+  button{font-family:inherit;cursor:pointer;}
+  ::-webkit-scrollbar{width:8px;height:8px;}
+  ::-webkit-scrollbar-thumb{background:#333849;border-radius:8px;}
+
+  /* ---------- App shell ---------- */
+  .app-header{
+    position:sticky;top:0;z-index:50;
+    background:rgba(15,17,21,0.92);backdrop-filter:blur(10px);
+    border-bottom:1px solid var(--border);
+    padding:14px 20px 0 20px;
+  }
+  .app-title-row{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;}
+  .app-title{font-size:18px;font-weight:700;letter-spacing:-0.02em;display:flex;align-items:center;gap:8px;}
+  .app-title .dot{width:9px;height:9px;border-radius:50%;background:var(--accent);}
+  .sync-pill{font-size:11px;color:var(--text-dim);border:1px solid var(--border);padding:4px 10px;border-radius:20px;display:flex;align-items:center;gap:6px;}
+  .sync-pill.ok .dotstat{background:#22c55e;}
+  .sync-pill.err .dotstat{background:#ef4444;}
+  .dotstat{width:6px;height:6px;border-radius:50%;background:#eab308;}
+
+  .company-tabs{display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;}
+  .company-tab{
+    padding:9px 16px;border-radius:10px 10px 0 0;border:1px solid var(--border);border-bottom:none;
+    background:var(--panel);color:var(--text-dim);font-weight:600;font-size:13.5px;
+    display:flex;align-items:center;gap:8px;
+  }
+  .company-tab .sw{width:8px;height:8px;border-radius:50%;}
+  .company-tab.active{background:var(--panel-2);color:var(--text);}
+  .company-tab.active[data-company="origin_point"]{box-shadow: inset 0 3px 0 var(--op);}
+  .company-tab.active[data-company="b_story"]{box-shadow: inset 0 3px 0 var(--bs);}
+  .company-tab.active[data-company="back_to_one"]{box-shadow: inset 0 3px 0 var(--bt1);}
+
+  .main-tabs{display:flex;gap:22px;border-bottom:1px solid var(--border);}
+  .main-tab{padding:10px 2px 12px 2px;font-size:14px;font-weight:600;color:var(--text-dim);border-bottom:2px solid transparent;background:none;border-top:none;border-left:none;border-right:none;}
+  .main-tab.active{color:var(--text);border-bottom-color:var(--accent);}
+
+  .content{max-width:1180px;margin:0 auto;padding:22px 20px 80px 20px;}
+
+  /* ---------- Platform sub-tabs ---------- */
+  .toolbar-row{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:18px;}
+  .platform-tabs{display:flex;gap:6px;flex-wrap:wrap;}
+  .platform-tab{
+    padding:7px 14px;border-radius:20px;border:1px solid var(--border);background:var(--panel);
+    color:var(--text-dim);font-size:13px;font-weight:600;display:flex;align-items:center;gap:6px;
+  }
+  .platform-tab.active{background:var(--accent);color:#fff;border-color:var(--accent);}
+  .status-filters{display:flex;gap:6px;flex-wrap:wrap;}
+  .status-pill{padding:5px 11px;border-radius:20px;font-size:12px;font-weight:600;border:1px solid var(--border);background:transparent;color:var(--text-dim);}
+  .status-pill.active{background:var(--panel-2);color:var(--text);border-color:#3a4053;}
+
+  .btn{background:var(--accent);color:#fff;border:none;padding:9px 16px;border-radius:10px;font-weight:600;font-size:13.5px;}
+  .btn:hover{filter:brightness(1.08);}
+  .btn.ghost{background:transparent;border:1px solid var(--border);color:var(--text);}
+  .btn.danger{background:#7f1d1d;}
+  .btn.small{padding:6px 11px;font-size:12px;border-radius:8px;}
+  .btn:disabled{opacity:0.5;cursor:not-allowed;}
+
+  .feed-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:20px;}
+  .empty-state{padding:60px 20px;text-align:center;color:var(--text-dim);border:1px dashed var(--border);border-radius:var(--radius);}
+
+  .status-badge{position:absolute;top:10px;right:10px;font-size:10px;font-weight:800;letter-spacing:0.04em;padding:4px 8px;border-radius:6px;text-transform:uppercase;z-index:5;}
+  .status-idea{background:#3f3f46;color:#e4e4e7;}
+  .status-draft{background:#78350f;color:#fde68a;}
+  .status-ready{background:#065f46;color:#a7f3d0;}
+  .status-scheduled{background:#1e3a8a;color:#bfdbfe;}
+  .status-posted{background:#4c1d95;color:#ddd6fe;}
+
+  .card-wrap{position:relative;cursor:pointer;transition:transform .15s ease;}
+  .card-wrap:hover{transform:translateY(-2px);}
+  .card-meta-line{margin-top:8px;font-size:11.5px;color:var(--text-dim);display:flex;justify-content:space-between;}
+
+  /* ---------- Instagram mockup ---------- */
+  .ig-card{background:#000;border:1px solid #262626;border-radius:10px;overflow:hidden;color:#fafafa;font-size:13px;}
+  .ig-header{display:flex;align-items:center;gap:9px;padding:9px 11px;}
+  .avatar-circ{width:30px;height:30px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:800;color:#fff;flex-shrink:0;}
+  .ig-handle{font-weight:600;font-size:13px;}
+  .ig-more{margin-left:auto;color:#aaa;}
+  .ig-media{width:100%;aspect-ratio:1/1;background:#111;display:flex;align-items:center;justify-content:center;overflow:hidden;position:relative;}
+  .ig-media img,.ig-media video{width:100%;height:100%;object-fit:cover;}
+  .ig-actions{display:flex;gap:12px;padding:9px 11px 2px 11px;font-size:19px;}
+  .ig-actions .spacer{flex:1;}
+  .ig-likes{padding:2px 11px;font-weight:600;font-size:12.5px;}
+  .ig-caption{padding:4px 11px 12px 11px;line-height:1.4;}
+  .ig-caption b{margin-right:5px;}
+  .hashtags{color:#4fa8ff;}
+
+  /* ---------- YouTube mockup ---------- */
+  .yt-card{background:transparent;color:var(--text);font-size:13px;}
+  .yt-thumb{width:100%;aspect-ratio:16/9;background:#22262f;border-radius:10px;overflow:hidden;position:relative;display:flex;align-items:center;justify-content:center;}
+  .yt-thumb img,.yt-thumb video{width:100%;height:100%;object-fit:cover;}
+  .yt-duration{position:absolute;bottom:6px;right:6px;background:rgba(0,0,0,0.8);color:#fff;font-size:10.5px;padding:1px 5px;border-radius:4px;font-weight:600;}
+  .yt-meta{display:flex;gap:10px;padding-top:10px;}
+  .yt-title{font-weight:700;font-size:14px;line-height:1.3;margin-bottom:3px;}
+  .yt-sub{color:var(--text-dim);font-size:12px;}
+
+  /* ---------- LinkedIn mockup ---------- */
+  .li-card{background:#1b1f27;border:1px solid var(--border);border-radius:10px;overflow:hidden;font-size:13px;}
+  .li-header{display:flex;gap:10px;padding:12px 12px 6px 12px;align-items:flex-start;}
+  .li-name{font-weight:700;font-size:13.5px;}
+  .li-headline{color:var(--text-dim);font-size:11.5px;}
+  .li-time{color:var(--text-dim);font-size:11px;}
+  .li-text{padding:2px 12px 10px 12px;line-height:1.45;white-space:pre-wrap;}
+  .li-media{width:100%;aspect-ratio:1.5/1;background:#111;display:flex;align-items:center;justify-content:center;overflow:hidden;position:relative;}
+  .li-media img,.li-media video{width:100%;height:100%;object-fit:cover;}
+  .li-actions{display:flex;gap:16px;padding:9px 12px;color:var(--text-dim);font-size:12px;font-weight:600;border-top:1px solid var(--border);margin-top:8px;}
+
+  /* ---------- Vertical (TikTok / Shorts) mockup ---------- */
+  .vert-card{background:#000;border-radius:14px;overflow:hidden;position:relative;aspect-ratio:9/16;color:#fff;}
+  .vert-media{position:absolute;inset:0;background:linear-gradient(160deg,#1a1a1a,#000);}
+  .vert-media img,.vert-media video{width:100%;height:100%;object-fit:cover;}
+  .vert-overlay{position:absolute;left:0;right:0;bottom:0;padding:14px 52px 16px 12px;background:linear-gradient(0deg,rgba(0,0,0,0.75),rgba(0,0,0,0));}
+  .vert-handle{font-weight:700;font-size:13px;margin-bottom:4px;}
+  .vert-caption{font-size:12.5px;line-height:1.35;max-height:54px;overflow:hidden;}
+  .vert-music{font-size:11px;margin-top:6px;color:#ddd;}
+  .vert-actions{position:absolute;right:8px;bottom:70px;display:flex;flex-direction:column;gap:16px;align-items:center;font-size:22px;}
+  .vert-actions span{font-size:10px;display:block;margin-top:2px;}
+  .vert-top-badge{position:absolute;top:10px;left:10px;font-size:10px;font-weight:800;background:rgba(255,255,255,0.15);padding:3px 7px;border-radius:6px;}
+
+  .no-media-ph{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;color:#666;font-size:12px;width:100%;height:100%;padding:8px;text-align:center;}
+  .no-media-ph .plus{font-size:26px;}
+
+  /* ---------- Carousel controls ---------- */
+  .media-slide{position:absolute;inset:0;display:none;align-items:center;justify-content:center;}
+  .media-slide.active{display:flex;}
+  .media-slide img,.media-slide video{width:100%;height:100%;object-fit:cover;}
+  .car-nav{position:absolute;top:50%;transform:translateY(-50%);width:26px;height:26px;border-radius:50%;background:rgba(0,0,0,0.55);color:#fff;display:flex;align-items:center;justify-content:center;font-size:14px;border:none;z-index:6;line-height:1;padding:0;}
+  .car-nav.prev{left:6px;}
+  .car-nav.next{right:6px;}
+  .car-dots{position:absolute;bottom:6px;left:0;right:0;display:flex;justify-content:center;gap:4px;z-index:6;}
+  .vert-card .car-dots{top:12px;bottom:auto;}
+  .car-dot{width:5px;height:5px;border-radius:50%;background:rgba(255,255,255,0.45);border:none;padding:0;}
+  .car-dot.active{background:#fff;width:6px;height:6px;}
+
+  /* ---------- Media list (editor) ---------- */
+  .media-list{display:flex;flex-direction:column;gap:8px;margin-bottom:8px;}
+  .media-item-row{display:flex;align-items:center;gap:10px;background:var(--panel-2);border:1px solid var(--border);border-radius:8px;padding:7px 9px;}
+  .media-item-row .mi-thumb{width:38px;height:38px;border-radius:6px;object-fit:cover;background:#111;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:14px;}
+  .media-item-row .mi-label{flex:1;font-size:12px;color:var(--text-dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .media-item-row .mi-btn{background:none;border:none;color:var(--text-dim);font-size:14px;padding:2px 5px;}
+  .media-item-row .mi-btn:hover{color:var(--text);}
+  .media-add-row{display:flex;gap:8px;}
+
+  /* ---------- Modal / editor ---------- */
+  .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:flex-start;justify-content:center;padding:40px 16px;overflow-y:auto;z-index:100;}
+  .modal{background:var(--panel);border:1px solid var(--border);border-radius:16px;width:100%;max-width:640px;padding:24px;}
+  .modal h2{margin:0 0 4px 0;font-size:18px;}
+  .modal .sub{color:var(--text-dim);font-size:12.5px;margin-bottom:18px;}
+  .field{margin-bottom:14px;}
+  .field label{display:block;font-size:12px;font-weight:700;color:var(--text-dim);margin-bottom:6px;text-transform:uppercase;letter-spacing:0.03em;}
+  .field input[type=text],.field input[type=date],.field textarea,.field select{
+    width:100%;background:var(--panel-2);border:1px solid var(--border);border-radius:8px;color:var(--text);
+    padding:9px 11px;font-size:13.5px;font-family:inherit;
+  }
+  .field textarea{resize:vertical;min-height:70px;}
+  .row2{display:grid;grid-template-columns:1fr 1fr;gap:12px;}
+  .seg{display:flex;border:1px solid var(--border);border-radius:8px;overflow:hidden;}
+  .seg button{flex:1;padding:8px;background:var(--panel-2);color:var(--text-dim);border:none;font-size:12.5px;font-weight:600;}
+  .seg button.active{background:var(--accent);color:#fff;}
+  .file-drop{border:1.5px dashed var(--border);border-radius:10px;padding:16px;text-align:center;color:var(--text-dim);font-size:12.5px;}
+  .file-drop input{display:none;}
+  .thumb-preview{display:flex;align-items:center;gap:10px;margin-top:8px;font-size:12px;color:var(--text-dim);}
+  .thumb-preview img{width:52px;height:52px;object-fit:cover;border-radius:6px;}
+  .modal-actions{display:flex;justify-content:space-between;align-items:center;margin-top:20px;padding-top:16px;border-top:1px solid var(--border);}
+  .modal-actions .right{display:flex;gap:8px;}
+  .close-x{position:absolute;top:16px;right:16px;background:none;border:none;color:var(--text-dim);font-size:20px;}
+  .modal{position:relative;}
+  .upload-status{font-size:11.5px;color:var(--accent);margin-top:6px;}
+
+  /* ---------- Posting prep ---------- */
+  .prep-list{display:flex;flex-direction:column;gap:12px;}
+  .prep-row{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:14px 16px;display:flex;gap:14px;align-items:center;flex-wrap:wrap;}
+  .prep-thumb{width:64px;height:64px;border-radius:8px;object-fit:cover;background:#22262f;flex-shrink:0;}
+  .prep-main{flex:1;min-width:220px;}
+  .prep-tags{display:flex;gap:6px;margin-bottom:5px;flex-wrap:wrap;}
+  .chip{font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:20px;text-transform:uppercase;letter-spacing:0.03em;}
+  .prep-caption{font-size:13px;color:var(--text-dim);max-width:520px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .prep-actions{display:flex;gap:7px;flex-wrap:wrap;}
+  .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#1f2430;border:1px solid var(--border);padding:10px 18px;border-radius:10px;font-size:13px;z-index:200;opacity:0;transition:opacity .2s ease;pointer-events:none;}
+  .toast.show{opacity:1;}
+
+  .section-heading{font-size:12px;font-weight:800;letter-spacing:0.06em;text-transform:uppercase;color:var(--text-dim);margin:26px 0 12px 0;}
+  .section-heading:first-child{margin-top:0;}
+
+  /* ---------- Live Page Preview ---------- */
+  .live-wrap{max-width:640px;margin:0 auto;}
+  .live-wrap.wide{max-width:900px;}
+  .profile-header{display:flex;align-items:center;gap:16px;padding:18px 4px 20px 4px;border-bottom:1px solid var(--border);margin-bottom:16px;}
+  .profile-header .avatar-circ{width:64px;height:64px;font-size:20px;}
+  .profile-name{font-size:17px;font-weight:800;}
+  .profile-handle{color:var(--text-dim);font-size:13px;margin-top:2px;}
+  .profile-stats{display:flex;gap:18px;margin-top:8px;font-size:12.5px;color:var(--text-dim);}
+  .profile-stats b{color:var(--text);}
+  .config-note{padding:40px 20px;text-align:center;color:var(--text-dim);border:1px dashed var(--border);border-radius:var(--radius);font-size:13.5px;line-height:1.6;}
+  .config-note button{margin-top:10px;}
+  .upcoming-badge{position:absolute;top:8px;left:8px;background:var(--accent);color:#fff;font-size:9.5px;font-weight:800;letter-spacing:0.04em;text-transform:uppercase;padding:3px 7px;border-radius:5px;z-index:6;}
+  .grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:3px;}
+  .grid3-tile{position:relative;aspect-ratio:1/1;background:#111;overflow:hidden;cursor:pointer;}
+  .grid3-tile img,.grid3-tile video{width:100%;height:100%;object-fit:cover;}
+  .grid-vert{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;}
+  .grid-vert-tile{position:relative;aspect-ratio:9/16;background:#111;border-radius:8px;overflow:hidden;cursor:pointer;}
+  .grid-vert-tile img,.grid-vert-tile video{width:100%;height:100%;object-fit:cover;}
+  .tile-cap{position:absolute;bottom:0;left:0;right:0;padding:5px 6px;font-size:9.5px;background:linear-gradient(0deg,rgba(0,0,0,0.85),rgba(0,0,0,0));color:#fff;line-height:1.25;max-height:34px;overflow:hidden;}
+  .yt-live-row{display:flex;gap:12px;padding:10px 4px;border-radius:10px;position:relative;cursor:pointer;}
+  .yt-live-row:hover{background:var(--panel);}
+  .yt-live-row .yt-live-thumb{width:160px;flex-shrink:0;aspect-ratio:16/9;background:#22262f;border-radius:8px;overflow:hidden;position:relative;}
+  .yt-live-row .yt-live-thumb img,.yt-live-row .yt-live-thumb video{width:100%;height:100%;object-fit:cover;}
+  .yt-live-title{font-weight:700;font-size:13.5px;line-height:1.3;margin-bottom:4px;}
+  .yt-live-sub{color:var(--text-dim);font-size:11.5px;}
+  .li-live-compact{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:10px 12px;display:flex;gap:10px;margin-bottom:10px;position:relative;}
+  .li-live-compact img{width:52px;height:52px;border-radius:8px;object-fit:cover;flex-shrink:0;background:#111;}
+  .li-live-compact .cap{font-size:12.5px;color:var(--text-dim);}
+  .add-current-row{display:flex;gap:8px;}
+</style>
+</head>
+<body>
+
+<div class="app-header">
+  <div class="app-title-row">
+    <div class="app-title"><span class="dot"></span> Content Command Center</div>
+    <div style="display:flex;align-items:center;gap:10px;">
+      <div class="sync-pill" id="syncPill"><span class="dotstat"></span><span id="syncText">Connecting…</span></div>
+      <button class="btn ghost small" id="settingsBtn" title="Settings">⚙ Settings</button>
+    </div>
+  </div>
+  <div class="company-tabs" id="companyTabs"></div>
+  <div class="main-tabs">
+    <button class="main-tab active" data-tab="previz">Previsualize</button>
+    <button class="main-tab" data-tab="live">Live Page Preview</button>
+    <button class="main-tab" data-tab="prep">Posting Prep</button>
+  </div>
+</div>
+
+<div class="content" id="content"></div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+/* ============ CONFIG ============ */
+const SUPABASE_URL = 'https://zhfscyhzonfwidbtkfdo.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_-dt8h6VXKVvQWVFnkqCiiQ_Ew3n8E6l';
+const REST = SUPABASE_URL + '/rest/v1';
+const STORAGE = SUPABASE_URL + '/storage/v1';
+const BUCKET = 'post-media';
+
+const COMPANIES = [
+  { id:'origin_point', name:'Origin Point', handle:'@originpoint', color:'#2563eb', initials:'OP',
+    platforms:['instagram','youtube','linkedin'] },
+  { id:'b_story', name:'B Story', handle:'@bstory', color:'#ea580c', initials:'BS',
+    platforms:['instagram','youtube','tiktok','youtube_shorts'] },
+  { id:'back_to_one', name:'Back To One', handle:'@backtoone', color:'#0d9488', initials:'B1',
+    platforms:['instagram','youtube','linkedin'] },
+];
+
+const PLATFORM_META = {
+  instagram:      { label:'Instagram',       kind:'ig' },
+  youtube:        { label:'YouTube',         kind:'yt' },
+  linkedin:       { label:'LinkedIn',        kind:'li' },
+  tiktok:         { label:'TikTok',          kind:'vert', vertLabel:'TikTok' },
+  youtube_shorts: { label:'YouTube Shorts',  kind:'vert', vertLabel:'Shorts' },
+};
+
+const STATUS_LIST = ['idea','draft','ready','scheduled','posted'];
+const STATUS_LABEL = { idea:'Idea', draft:'Draft', ready:'Ready', scheduled:'Scheduled', posted:'Posted' };
+
+/* ============ STATE ============ */
+let state = {
+  company: 'origin_point',
+  mainTab: 'previz',
+  platform: null,
+  statusFilter: 'all',
+  posts: [],
+  loaded: false,
+  carouselIndex: {},
+  settings: {},
+  currentPosts: [],
+  ytCache: {},
+};
+
+/* ============ SUPABASE HELPERS ============ */
+function sbHeaders(extra){
+  return Object.assign({ apikey: SUPABASE_KEY, Authorization: 'Bearer ' + SUPABASE_KEY }, extra || {});
+}
+
+async function fetchPosts(){
+  const res = await fetch(REST + '/posts?select=*&order=sort_order.asc,created_at.desc', {
+    headers: sbHeaders()
+  });
+  if(!res.ok) throw new Error('Failed to load posts: ' + res.status);
+  return res.json();
+}
+
+async function createPost(payload){
+  const res = await fetch(REST + '/posts', {
+    method:'POST',
+    headers: sbHeaders({ 'Content-Type':'application/json', 'Prefer':'return=representation' }),
+    body: JSON.stringify(payload)
+  });
+  if(!res.ok) throw new Error('Create failed: ' + await res.text());
+  const rows = await res.json();
+  return rows[0];
+}
+
+async function updatePost(id, patch){
+  const res = await fetch(REST + '/posts?id=eq.' + id, {
+    method:'PATCH',
+    headers: sbHeaders({ 'Content-Type':'application/json', 'Prefer':'return=representation' }),
+    body: JSON.stringify(patch)
+  });
+  if(!res.ok) throw new Error('Update failed: ' + await res.text());
+  const rows = await res.json();
+  return rows[0];
+}
+
+async function deletePostRemote(id){
+  const res = await fetch(REST + '/posts?id=eq.' + id, {
+    method:'DELETE',
+    headers: sbHeaders()
+  });
+  if(!res.ok) throw new Error('Delete failed: ' + await res.text());
+}
+
+function sanitizeFilename(name){
+  return name.replace(/[^a-zA-Z0-9._-]/g,'_');
+}
+
+async function uploadToStorage(file, folder){
+  const stamp = String(Date.now()) + '-' + Math.floor(Math.random()*100000);
+  const path = folder + '/' + stamp + '-' + sanitizeFilename(file.name);
+  const res = await fetch(STORAGE + '/object/' + BUCKET + '/' + path, {
+    method:'POST',
+    headers: sbHeaders({ 'Content-Type': file.type || 'application/octet-stream' }),
+    body: file
+  });
+  if(!res.ok) throw new Error('Upload failed: ' + await res.text());
+  return { path, publicUrl: STORAGE + '/object/public/' + BUCKET + '/' + path };
+}
+
+/* ---- Settings (key/value, shared across the team) ---- */
+async function fetchSettings(){
+  const res = await fetch(REST + '/settings?select=key,value', { headers: sbHeaders() });
+  if(!res.ok) throw new Error('Failed to load settings: ' + res.status);
+  const rows = await res.json();
+  const out = {};
+  rows.forEach(r => out[r.key] = r.value);
+  return out;
+}
+
+async function saveSetting(key, value){
+  const res = await fetch(REST + '/settings?on_conflict=key', {
+    method:'POST',
+    headers: sbHeaders({ 'Content-Type':'application/json', 'Prefer':'resolution=merge-duplicates,return=representation' }),
+    body: JSON.stringify({ key, value, updated_at: new Date().toISOString() })
+  });
+  if(!res.ok) throw new Error('Save setting failed: ' + await res.text());
+  return res.json();
+}
+
+/* ---- Current (already-live) posts — manual entries for platforms without an API ---- */
+async function fetchCurrentPosts(){
+  const res = await fetch(REST + '/current_posts?select=*&order=sort_order.asc,created_at.desc', { headers: sbHeaders() });
+  if(!res.ok) throw new Error('Failed to load current posts: ' + res.status);
+  return res.json();
+}
+
+async function createCurrentPost(payload){
+  const res = await fetch(REST + '/current_posts', {
+    method:'POST',
+    headers: sbHeaders({ 'Content-Type':'application/json', 'Prefer':'return=representation' }),
+    body: JSON.stringify(payload)
+  });
+  if(!res.ok) throw new Error('Create failed: ' + await res.text());
+  const rows = await res.json();
+  return rows[0];
+}
+
+async function deleteCurrentPostRemote(id){
+  const res = await fetch(REST + '/current_posts?id=eq.' + id, { method:'DELETE', headers: sbHeaders() });
+  if(!res.ok) throw new Error('Delete failed: ' + await res.text());
+}
+
+/* ---- YouTube Data API (real, live channel videos) ---- */
+async function fetchYoutubeVideos(channelId, apiKey){
+  const chRes = await fetch(`https://www.googleapis.com/youtube/v3/channels?part=contentDetails&id=${encodeURIComponent(channelId)}&key=${encodeURIComponent(apiKey)}`);
+  const chJson = await chRes.json();
+  if(!chRes.ok) throw new Error(chJson.error && chJson.error.message || 'YouTube channel lookup failed');
+  const uploadsPlaylist = chJson.items && chJson.items[0] && chJson.items[0].contentDetails.relatedPlaylists.uploads;
+  if(!uploadsPlaylist) throw new Error('No channel found for that Channel ID');
+  const plRes = await fetch(`https://www.googleapis.com/youtube/v3/playlistItems?part=snippet&maxResults=12&playlistId=${encodeURIComponent(uploadsPlaylist)}&key=${encodeURIComponent(apiKey)}`);
+  const plJson = await plRes.json();
+  if(!plRes.ok) throw new Error(plJson.error && plJson.error.message || 'YouTube video list failed');
+  return (plJson.items || []).map(it => ({
+    id: it.snippet.resourceId.videoId,
+    title: it.snippet.title,
+    thumb: (it.snippet.thumbnails.medium || it.snippet.thumbnails.default || {}).url,
+    publishedAt: it.snippet.publishedAt,
+    url: 'https://www.youtube.com/watch?v=' + it.snippet.resourceId.videoId,
+  }));
+}
+
+async function loadYoutubeForCompany(companyId){
+  const apiKey = state.settings.youtube_api_key;
+  const channelId = state.settings['youtube_channel__' + companyId];
+  if(!apiKey || !channelId){
+    state.ytCache[companyId] = { status:'unconfigured' };
+    return;
+  }
+  state.ytCache[companyId] = { status:'loading' };
+  try{
+    const videos = await fetchYoutubeVideos(channelId, apiKey);
+    state.ytCache[companyId] = { status:'ok', videos, loadedAt: Date.now() };
+  }catch(err){
+    console.error(err);
+    state.ytCache[companyId] = { status:'error', error: err.message };
+  }
+}
+
+/* ============ UTIL ============ */
+function $(sel, root){ return (root||document).querySelector(sel); }
+function $all(sel, root){ return Array.from((root||document).querySelectorAll(sel)); }
+function companyById(id){ return COMPANIES.find(c => c.id === id); }
+function escapeHtml(str){
+  return (str||'').replace(/[&<>"']/g, s => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[s]));
+}
+function showToast(msg){
+  const t = $('#toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(showToast._t);
+  showToast._t = setTimeout(()=> t.classList.remove('show'), 2200);
+}
+function fmtDate(d){
+  if(!d) return '';
+  const dt = new Date(d + 'T00:00:00');
+  return dt.toLocaleDateString(undefined, { month:'short', day:'numeric' });
+}
+function isVideoType(mediaType){ return mediaType === 'video'; }
+function guessTypeFromMime(mime){
+  if(!mime) return 'image';
+  return mime.startsWith('video') ? 'video' : 'image';
+}
+
+/* ============ INIT ============ */
+async function init(){
+  renderCompanyTabs();
+  bindTopLevelEvents();
+  try{
+    const [posts, settings, currentPosts] = await Promise.all([fetchPosts(), fetchSettings(), fetchCurrentPosts()]);
+    state.posts = posts;
+    state.settings = settings;
+    state.currentPosts = currentPosts;
+    state.loaded = true;
+    setSyncStatus(true, 'Synced with Supabase');
+  }catch(e){
+    console.error(e);
+    setSyncStatus(false, 'Offline — check Supabase connection');
+  }
+  renderAll();
+}
+
+function setSyncStatus(ok, text){
+  const pill = $('#syncPill');
+  pill.classList.toggle('ok', ok);
+  pill.classList.toggle('err', !ok);
+  $('#syncText').textContent = text;
+}
+
+function renderCompanyTabs(){
+  const wrap = $('#companyTabs');
+  wrap.innerHTML = COMPANIES.map(c => `
+    <button class="company-tab ${c.id===state.company?'active':''}" data-company="${c.id}">
+      <span class="sw" style="background:${c.color}"></span>${c.name}
+    </button>
+  `).join('');
+  $all('.company-tab', wrap).forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      state.company = btn.dataset.company;
+      state.platform = null;
+      renderCompanyTabs();
+      renderAll();
+    });
+  });
+}
+
+function bindTopLevelEvents(){
+  $all('.main-tab').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      $all('.main-tab').forEach(b=>b.classList.remove('active'));
+      btn.classList.add('active');
+      state.mainTab = btn.dataset.tab;
+      renderAll();
+    });
+  });
+  $('#settingsBtn').addEventListener('click', openSettingsModal);
+}
+
+function renderAll(){
+  if(state.mainTab === 'previz') renderPreviz();
+  else if(state.mainTab === 'live') renderLivePreview();
+  else renderPrep();
+}
+
+/* ============ PREVISUALIZE TAB ============ */
+function renderPreviz(){
+  const company = companyById(state.company);
+  if(!state.platform || !company.platforms.includes(state.platform)){
+    state.platform = company.platforms[0];
+  }
+  const content = $('#content');
+  content.innerHTML = `
+    <div class="toolbar-row">
+      <div class="platform-tabs">
+        ${company.platforms.map(p => `
+          <button class="platform-tab ${p===state.platform?'active':''}" data-platform="${p}">
+            ${PLATFORM_META[p].label}
+          </button>`).join('')}
+      </div>
+      <button class="btn" id="newPostBtn">+ New Post</button>
+    </div>
+    <div class="toolbar-row">
+      <div class="status-filters">
+        <button class="status-pill ${state.statusFilter==='all'?'active':''}" data-status="all">All</button>
+        ${STATUS_LIST.map(s => `<button class="status-pill ${state.statusFilter===s?'active':''}" data-status="${s}">${STATUS_LABEL[s]}</button>`).join('')}
+      </div>
+    </div>
+    <div class="feed-grid" id="feedGrid"></div>
+  `;
+
+  $all('.platform-tab').forEach(btn=>{
+    btn.addEventListener('click', ()=>{ state.platform = btn.dataset.platform; renderPreviz(); });
+  });
+  $all('.status-pill').forEach(btn=>{
+    btn.addEventListener('click', ()=>{ state.statusFilter = btn.dataset.status; renderPreviz(); });
+  });
+  $('#newPostBtn').addEventListener('click', ()=> openEditor(null));
+
+  const posts = state.posts.filter(p =>
+    p.company_id === state.company &&
+    p.platform === state.platform &&
+    (state.statusFilter === 'all' || p.status === state.statusFilter)
+  );
+
+  const grid = $('#feedGrid');
+  if(posts.length === 0){
+    grid.innerHTML = `<div class="empty-state" style="grid-column:1/-1">No posts yet for ${PLATFORM_META[state.platform].label}. Click “+ New Post” to previsualize one.</div>`;
+    return;
+  }
+  grid.innerHTML = posts.map(p => renderCardWrap(p, company)).join('');
+  $all('.card-wrap', grid).forEach(el=>{
+    el.addEventListener('click', (e)=>{
+      if(e.target.closest('.car-nav') || e.target.closest('.car-dot')) return;
+      openEditor(el.dataset.id);
+    });
+  });
+  bindCarouselControls(grid);
+}
+
+function mediaItemsOf(post){
+  return Array.isArray(post.media_items) ? post.media_items : [];
+}
+
+function renderCardWrap(post, company){
+  const meta = PLATFORM_META[post.platform];
+  let inner = '';
+  if(meta.kind === 'ig') inner = renderIgCard(post, company);
+  else if(meta.kind === 'yt') inner = renderYtCard(post, company);
+  else if(meta.kind === 'li') inner = renderLiCard(post, company);
+  else if(meta.kind === 'vert') inner = renderVertCard(post, company, meta.vertLabel);
+
+  const items = mediaItemsOf(post);
+  let mediaLabel = '— empty —';
+  if(items.length === 1) mediaLabel = items[0].type === 'link' ? '🔗 link' : '📎 media';
+  else if(items.length > 1) mediaLabel = `📎 ${items.length} slides`;
+
+  return `
+    <div class="card-wrap" data-id="${post.id}">
+      <span class="status-badge status-${post.status}">${STATUS_LABEL[post.status]}</span>
+      ${inner}
+      <div class="card-meta-line">
+        <span>${post.scheduled_date ? 'Scheduled ' + fmtDate(post.scheduled_date) : 'No date set'}</span>
+        <span>${mediaLabel}</span>
+      </div>
+    </div>
+  `;
+}
+
+function renderMediaSlides(post){
+  const items = mediaItemsOf(post);
+  if(items.length === 0){
+    return `<div class="no-media-ph"><span class="plus">+</span>Add media</div>`;
+  }
+  const activeIdx = Math.min(state.carouselIndex[post.id] || 0, items.length - 1);
+  const slides = items.map((it, i) => {
+    let inner;
+    if(it.type === 'link'){
+      inner = `<div class="no-media-ph"><span class="plus">🔗</span>Linked file<br><span style="max-width:90%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(it.url)}</span></div>`;
+    } else if(it.media_type === 'video'){
+      inner = `<video src="${it.url}" muted loop playsinline></video>`;
+    } else {
+      inner = `<img src="${it.url}" alt="">`;
+    }
+    return `<div class="media-slide ${i===activeIdx?'active':''}">${inner}</div>`;
+  }).join('');
+  const nav = items.length > 1 ? `
+    <button type="button" class="car-nav prev" data-post="${post.id}" data-dir="-1">‹</button>
+    <button type="button" class="car-nav next" data-post="${post.id}" data-dir="1">›</button>
+    <div class="car-dots">${items.map((_,i)=>`<button type="button" class="car-dot ${i===activeIdx?'active':''}" data-post="${post.id}" data-idx="${i}"></button>`).join('')}</div>
+  ` : '';
+  return slides + nav;
+}
+
+function bindCarouselControls(root){
+  $all('.car-nav', root).forEach(btn=>{
+    btn.addEventListener('click', (e)=>{
+      e.stopPropagation();
+      const postId = btn.dataset.post;
+      const post = state.posts.find(p=>p.id===postId);
+      const items = mediaItemsOf(post);
+      const cur = state.carouselIndex[postId] || 0;
+      const dir = parseInt(btn.dataset.dir, 10);
+      state.carouselIndex[postId] = (cur + dir + items.length) % items.length;
+      renderFeedOnly();
+    });
+  });
+  $all('.car-dot', root).forEach(btn=>{
+    btn.addEventListener('click', (e)=>{
+      e.stopPropagation();
+      state.carouselIndex[btn.dataset.post] = parseInt(btn.dataset.idx, 10);
+      renderFeedOnly();
+    });
+  });
+}
+
+function renderFeedOnly(){
+  const company = companyById(state.company);
+  const posts = state.posts.filter(p =>
+    p.company_id === state.company &&
+    p.platform === state.platform &&
+    (state.statusFilter === 'all' || p.status === state.statusFilter)
+  );
+  const grid = $('#feedGrid');
+  if(!grid) return;
+  grid.innerHTML = posts.map(p => renderCardWrap(p, company)).join('');
+  $all('.card-wrap', grid).forEach(el=>{
+    el.addEventListener('click', (e)=>{
+      if(e.target.closest('.car-nav') || e.target.closest('.car-dot')) return;
+      openEditor(el.dataset.id);
+    });
+  });
+  bindCarouselControls(grid);
+}
+
+function renderIgCard(post, company){
+  return `
+    <div class="ig-card">
+      <div class="ig-header">
+        <div class="avatar-circ" style="background:${company.color}">${company.initials}</div>
+        <div class="ig-handle">${company.handle}</div>
+        <div class="ig-more">•••</div>
+      </div>
+      <div class="ig-media">${renderMediaSlides(post)}</div>
+      <div class="ig-actions">♡ <span>💬</span> <span>➤</span><span class="spacer"></span> 🔖</div>
+      <div class="ig-likes">${post.status==='posted' ? 'View insights' : 'Preview — not yet posted'}</div>
+      <div class="ig-caption"><b>${company.handle}</b>${escapeHtml(post.caption || '(no caption yet)')} <span class="hashtags">${escapeHtml(post.hashtags||'')}</span></div>
+    </div>
+  `;
+}
+
+function renderYtCard(post, company){
+  const title = post.caption || '(untitled video)';
+  const items = mediaItemsOf(post);
+  let thumb;
+  if(post.thumbnail_url){
+    thumb = post.thumbnail_url.match(/\.(mp4|mov|webm)$/i) ? `<video src="${post.thumbnail_url}" muted></video>` : `<img src="${post.thumbnail_url}">`;
+  } else if(items.length > 0){
+    const first = items[0];
+    if(first.type === 'link'){
+      thumb = `<div class="no-media-ph"><span class="plus">🔗</span>Linked file</div>`;
+    } else if(first.media_type === 'video'){
+      thumb = `<video src="${first.url}" muted></video>`;
+    } else {
+      thumb = `<img src="${first.url}">`;
+    }
+  } else {
+    thumb = `<div class="no-media-ph"><span class="plus">+</span>Add media</div>`;
+  }
+  return `
+    <div class="yt-card">
+      <div class="yt-thumb">${thumb}<span class="yt-duration">${post.platform==='youtube' && post.notes && post.notes.match(/\d+:\d+/) ? post.notes.match(/\d+:\d+/)[0] : 'VIDEO'}</span></div>
+      <div class="yt-meta">
+        <div class="avatar-circ" style="background:${company.color}">${company.initials}</div>
+        <div>
+          <div class="yt-title">${escapeHtml(title)}</div>
+          <div class="yt-sub">${company.handle} · ${post.scheduled_date ? fmtDate(post.scheduled_date) : 'unscheduled'}</div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function renderLiCard(post, company){
+  return `
+    <div class="li-card">
+      <div class="li-header">
+        <div class="avatar-circ" style="background:${company.color}">${company.initials}</div>
+        <div>
+          <div class="li-name">${company.name}</div>
+          <div class="li-headline">Video production & filmmaking</div>
+          <div class="li-time">${post.scheduled_date ? fmtDate(post.scheduled_date) : 'Draft'} · 🌐</div>
+        </div>
+      </div>
+      <div class="li-text">${escapeHtml(post.caption || '(no caption yet)')}</div>
+      <div class="li-media">${renderMediaSlides(post)}</div>
+      <div class="li-actions"><span>👍 Like</span><span>💬 Comment</span><span>↪ Repost</span><span>✉ Send</span></div>
+    </div>
+  `;
+}
+
+function renderVertCard(post, company, label){
+  return `
+    <div class="vert-card">
+      <div class="vert-media">${renderMediaSlides(post)}</div>
+      <div class="vert-top-badge">${label}</div>
+      <div class="vert-actions"><div>♥<span>Like</span></div><div>💬<span>${label==='Shorts'?'':'Cmt'}</span></div><div>↪<span>Share</span></div></div>
+      <div class="vert-overlay">
+        <div class="vert-handle">${company.handle}</div>
+        <div class="vert-caption">${escapeHtml(post.caption || '(no caption yet)')} ${escapeHtml(post.hashtags||'')}</div>
+        ${label!=='Shorts' ? '<div class="vert-music">♪ original sound — ' + company.handle.replace('@','') + '</div>' : ''}
+      </div>
+    </div>
+  `;
+}
+
+/* ============ EDITOR MODAL ============ */
+function openEditor(id){
+  const post = id ? state.posts.find(p=>p.id===id) : null;
+  const company = companyById(state.company);
+  const isNew = !post;
+  const draft = post ? Object.assign({}, post) : {
+    company_id: state.company,
+    platform: state.platform,
+    status: 'idea',
+    caption: '', hashtags: '', media_items: [],
+    thumbnail_url: null, post_url: '', scheduled_date: '', notes: '',
+  };
+
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal">
+      <button class="close-x">&times;</button>
+      <h2>${isNew ? 'New' : 'Edit'} ${PLATFORM_META[draft.platform].label} post</h2>
+      <div class="sub">${company.name} · ${company.handle}</div>
+
+      <div class="field">
+        <label>Status</label>
+        <select id="f_status">
+          ${STATUS_LIST.map(s=>`<option value="${s}" ${draft.status===s?'selected':''}>${STATUS_LABEL[s]}</option>`).join('')}
+        </select>
+      </div>
+
+      <div class="field">
+        <label>Media (add more than one for a carousel)</label>
+        <div class="media-list" id="mediaList"></div>
+        <div class="media-add-row">
+          <button type="button" class="btn ghost small" id="addUploadBtn">+ Upload file</button>
+          <button type="button" class="btn ghost small" id="addLinkBtn">+ Paste share link</button>
+        </div>
+        <input type="file" id="hiddenFileInput" accept="image/*,video/*" style="display:none">
+        <div class="upload-status" id="uploadStatus"></div>
+      </div>
+
+      <div class="field">
+        <label>Thumbnail (optional — cover image for video posts)</label>
+        <div class="file-drop" id="thumbDrop">
+          <input type="file" id="f_thumb" accept="image/*">
+          Click to choose a thumbnail image
+        </div>
+        <div class="upload-status" id="thumbStatus"></div>
+        ${draft.thumbnail_url ? `<div class="thumb-preview"><img src="${draft.thumbnail_url}"><span>Current thumbnail</span></div>` : ''}
+      </div>
+
+      <div class="field">
+        <label>Caption</label>
+        <textarea id="f_caption" placeholder="Write the caption exactly as it should post...">${escapeHtml(draft.caption||'')}</textarea>
+      </div>
+
+      <div class="field">
+        <label>Hashtags</label>
+        <input type="text" id="f_hashtags" placeholder="#filmmaking #bts #originpoint" value="${escapeHtml(draft.hashtags||'')}">
+      </div>
+
+      <div class="row2">
+        <div class="field">
+          <label>Scheduled date</label>
+          <input type="date" id="f_date" value="${draft.scheduled_date||''}">
+        </div>
+        <div class="field">
+          <label>Live post URL (once posted)</label>
+          <input type="text" id="f_posturl" placeholder="https://instagram.com/p/..." value="${escapeHtml(draft.post_url||'')}">
+        </div>
+      </div>
+
+      <div class="field">
+        <label>Notes for whoever posts this</label>
+        <textarea id="f_notes" placeholder="e.g. tag @client, post at 9am, use trending audio XYZ...">${escapeHtml(draft.notes||'')}</textarea>
+      </div>
+
+      <div class="modal-actions">
+        <div>${!isNew ? '<button class="btn danger small" id="deleteBtn">Delete post</button>' : ''}</div>
+        <div class="right">
+          <button class="btn ghost small" id="cancelBtn">Cancel</button>
+          <button class="btn small" id="saveBtn">Save post</button>
+        </div>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  let mediaItems = (draft.media_items || []).map(it => Object.assign({}, it));
+  let pendingThumbUrl = draft.thumbnail_url;
+
+  function renderMediaList(){
+    const wrap = $('#mediaList', overlay);
+    if(mediaItems.length === 0){
+      wrap.innerHTML = `<div style="font-size:12px;color:var(--text-dim);">No media added yet — upload a file or paste a link below.</div>`;
+    } else {
+      wrap.innerHTML = mediaItems.map((it, i) => {
+        const thumb = it.type === 'link'
+          ? '🔗'
+          : (it.media_type === 'video' ? `<video src="${it.url}" muted></video>` : `<img src="${it.url}">`);
+        const label = it.type === 'link' ? it.url : (it.file_name || 'uploaded file');
+        return `
+          <div class="media-item-row" data-idx="${i}">
+            <span style="font-size:11px;color:var(--text-dim);width:14px;">${i+1}</span>
+            <div class="mi-thumb">${thumb}</div>
+            <div class="mi-label">${escapeHtml(label)}</div>
+            <button type="button" class="mi-btn move-up" title="Move earlier" ${i===0?'disabled':''}>↑</button>
+            <button type="button" class="mi-btn move-down" title="Move later" ${i===mediaItems.length-1?'disabled':''}>↓</button>
+            <button type="button" class="mi-btn remove-item" title="Remove">✕</button>
+          </div>
+        `;
+      }).join('');
+    }
+    $all('.remove-item', wrap).forEach(btn=>{
+      btn.addEventListener('click', ()=>{
+        const idx = parseInt(btn.closest('.media-item-row').dataset.idx, 10);
+        mediaItems.splice(idx, 1);
+        renderMediaList();
+      });
+    });
+    $all('.move-up', wrap).forEach(btn=>{
+      btn.addEventListener('click', ()=>{
+        const idx = parseInt(btn.closest('.media-item-row').dataset.idx, 10);
+        if(idx > 0){ [mediaItems[idx-1], mediaItems[idx]] = [mediaItems[idx], mediaItems[idx-1]]; renderMediaList(); }
+      });
+    });
+    $all('.move-down', wrap).forEach(btn=>{
+      btn.addEventListener('click', ()=>{
+        const idx = parseInt(btn.closest('.media-item-row').dataset.idx, 10);
+        if(idx < mediaItems.length-1){ [mediaItems[idx+1], mediaItems[idx]] = [mediaItems[idx], mediaItems[idx+1]]; renderMediaList(); }
+      });
+    });
+  }
+  renderMediaList();
+
+  $('.close-x', overlay).addEventListener('click', ()=> overlay.remove());
+  $('#cancelBtn', overlay).addEventListener('click', ()=> overlay.remove());
+  overlay.addEventListener('click', (e)=>{ if(e.target === overlay) overlay.remove(); });
+
+  $('#addUploadBtn', overlay).addEventListener('click', ()=> $('#hiddenFileInput', overlay).click());
+  $('#addLinkBtn', overlay).addEventListener('click', ()=>{
+    const link = prompt('Paste the share link (Frame.io, Drive, Dropbox, etc.) for this slide:');
+    if(link && link.trim()){
+      mediaItems.push({ type:'link', url: link.trim(), media_type:null, file_name:null });
+      renderMediaList();
+    }
+  });
+
+  $('#hiddenFileInput', overlay).addEventListener('change', async (e)=>{
+    const file = e.target.files[0];
+    if(!file) return;
+    $('#uploadStatus', overlay).textContent = 'Uploading…';
+    try{
+      const { publicUrl } = await uploadToStorage(file, `${draft.company_id}/${draft.platform}`);
+      mediaItems.push({ type:'upload', url: publicUrl, media_type: guessTypeFromMime(file.type), file_name: file.name });
+      renderMediaList();
+      $('#uploadStatus', overlay).textContent = 'Uploaded: ' + file.name;
+      e.target.value = '';
+    }catch(err){
+      console.error(err);
+      $('#uploadStatus', overlay).textContent = 'Upload failed — try again.';
+    }
+  });
+
+  $('#f_thumb', overlay).addEventListener('change', async (e)=>{
+    const file = e.target.files[0];
+    if(!file) return;
+    $('#thumbStatus', overlay).textContent = 'Uploading…';
+    try{
+      const { publicUrl } = await uploadToStorage(file, `${draft.company_id}/${draft.platform}/thumbnails`);
+      pendingThumbUrl = publicUrl;
+      $('#thumbStatus', overlay).textContent = 'Thumbnail uploaded: ' + file.name;
+    }catch(err){
+      console.error(err);
+      $('#thumbStatus', overlay).textContent = 'Upload failed — try again.';
+    }
+  });
+
+  if(!isNew){
+    $('#deleteBtn', overlay).addEventListener('click', async ()=>{
+      if(!confirm('Delete this post? This cannot be undone.')) return;
+      try{
+        await deletePostRemote(post.id);
+        state.posts = state.posts.filter(p=>p.id!==post.id);
+        overlay.remove();
+        renderAll();
+        showToast('Post deleted');
+      }catch(err){ console.error(err); showToast('Failed to delete'); }
+    });
+  }
+
+  $('#saveBtn', overlay).addEventListener('click', async ()=>{
+    const payload = {
+      company_id: draft.company_id,
+      platform: draft.platform,
+      status: $('#f_status', overlay).value,
+      caption: $('#f_caption', overlay).value,
+      hashtags: $('#f_hashtags', overlay).value,
+      media_items: mediaItems,
+      thumbnail_url: pendingThumbUrl,
+      post_url: $('#f_posturl', overlay).value,
+      scheduled_date: $('#f_date', overlay).value || null,
+      notes: $('#f_notes', overlay).value,
+    };
+    $('#saveBtn', overlay).disabled = true;
+    $('#saveBtn', overlay).textContent = 'Saving…';
+    try{
+      if(isNew){
+        const created = await createPost(payload);
+        state.posts.unshift(created);
+      } else {
+        const updated = await updatePost(post.id, payload);
+        const idx = state.posts.findIndex(p=>p.id===post.id);
+        state.posts[idx] = updated;
+      }
+      overlay.remove();
+      renderAll();
+      showToast('Saved');
+    }catch(err){
+      console.error(err);
+      $('#saveBtn', overlay).disabled = false;
+      $('#saveBtn', overlay).textContent = 'Save post';
+      showToast('Save failed — check connection');
+    }
+  });
+}
+
+/* ============ POSTING PREP TAB ============ */
+function renderPrep(){
+  const content = $('#content');
+  const actionable = state.posts.filter(p => p.status === 'ready' || p.status === 'scheduled');
+  const grouped = {};
+  actionable.forEach(p=>{
+    grouped[p.company_id] = grouped[p.company_id] || [];
+    grouped[p.company_id].push(p);
+  });
+
+  let html = `
+    <div class="toolbar-row">
+      <div style="color:var(--text-dim);font-size:13px;max-width:640px;">
+        Everything marked <b style="color:var(--text)">Ready</b> or <b style="color:var(--text)">Scheduled</b> shows up here as a grab-and-go kit: caption, hashtags, media, and thumbnail all in one place for whoever is posting.
+      </div>
+    </div>
+  `;
+
+  if(actionable.length === 0){
+    html += `<div class="empty-state">Nothing queued to post yet. Mark a post “Ready” or “Scheduled” in Previsualize and it’ll show up here.</div>`;
+    content.innerHTML = html;
+    return;
+  }
+
+  COMPANIES.forEach(c=>{
+    const posts = (grouped[c.id]||[]).slice().sort((a,b)=>{
+      const da = a.scheduled_date || '9999-99-99', db = b.scheduled_date || '9999-99-99';
+      return da.localeCompare(db);
+    });
+    if(posts.length===0) return;
+    html += `<div class="section-heading" style="color:${c.color}">${c.name}</div><div class="prep-list">`;
+    posts.forEach(p=>{
+      const meta = PLATFORM_META[p.platform];
+      const items = mediaItemsOf(p);
+      const firstUpload = items.find(it => it.type === 'upload');
+      const thumbSrc = p.thumbnail_url || (firstUpload ? firstUpload.url : '');
+      const mediaButtons = items.map((it, i) => {
+        if(it.type === 'upload'){
+          return `<a class="btn ghost small" href="${it.url}" target="_blank" download>Media ${items.length>1 ? i+1 : ''}</a>`;
+        }
+        return `<a class="btn ghost small" href="${it.url}" target="_blank">Link ${items.length>1 ? i+1 : ''}</a>`;
+      }).join('');
+      html += `
+        <div class="prep-row" data-id="${p.id}">
+          ${thumbSrc ? `<img class="prep-thumb" src="${thumbSrc}">` : `<div class="prep-thumb" style="display:flex;align-items:center;justify-content:center;color:var(--text-dim);font-size:10px;">no media</div>`}
+          <div class="prep-main">
+            <div class="prep-tags">
+              <span class="chip" style="background:${c.color}22;color:${c.color}">${meta.label}</span>
+              <span class="chip status-${p.status}">${STATUS_LABEL[p.status]}</span>
+              ${items.length>1 ? `<span class="chip" style="background:#ffffff14;color:var(--text-dim)">${items.length} slides</span>` : ''}
+              ${p.scheduled_date ? `<span class="chip" style="background:#ffffff14;color:var(--text-dim)">${fmtDate(p.scheduled_date)}</span>` : ''}
+            </div>
+            <div class="prep-caption">${escapeHtml(p.caption || '(no caption)')}</div>
+          </div>
+          <div class="prep-actions">
+            <button class="btn ghost small copy-caption">Copy caption</button>
+            <button class="btn ghost small copy-hashtags">Copy hashtags</button>
+            ${mediaButtons}
+            ${p.thumbnail_url ? `<a class="btn ghost small" href="${p.thumbnail_url}" target="_blank" download>Thumbnail</a>` : ''}
+            <button class="btn small mark-posted">Mark posted</button>
+            <button class="btn ghost small edit-row">Edit</button>
+          </div>
+        </div>
+      `;
+    });
+    html += `</div>`;
+  });
+
+  content.innerHTML = html;
+
+  $all('.prep-row', content).forEach(row=>{
+    const id = row.dataset.id;
+    const post = state.posts.find(p=>p.id===id);
+    $('.copy-caption', row).addEventListener('click', ()=>{
+      navigator.clipboard.writeText(post.caption||'').then(()=> showToast('Caption copied'));
+    });
+    $('.copy-hashtags', row).addEventListener('click', ()=>{
+      navigator.clipboard.writeText(post.hashtags||'').then(()=> showToast('Hashtags copied'));
+    });
+    $('.edit-row', row).addEventListener('click', ()=> openEditor(id));
+    $('.mark-posted', row).addEventListener('click', async ()=>{
+      const url = prompt('Optional: paste the live post URL (or leave blank)') || '';
+      try{
+        const updated = await updatePost(id, { status:'posted', post_url: url });
+        const idx = state.posts.findIndex(p=>p.id===id);
+        state.posts[idx] = updated;
+        renderAll();
+        showToast('Marked as posted 🎉');
+      }catch(err){ console.error(err); showToast('Failed to update'); }
+    });
+  });
+}
+
+/* ============ LIVE PAGE PREVIEW TAB ============ */
+function upcomingPostsFor(companyId, platform){
+  return state.posts.filter(p => p.company_id===companyId && p.platform===platform && (p.status==='ready' || p.status==='scheduled'));
+}
+function currentPostsFor(companyId, platform){
+  return state.currentPosts.filter(p => p.company_id===companyId && p.platform===platform)
+    .sort((a,b)=> (a.sort_order-b.sort_order) || (new Date(b.created_at)-new Date(a.created_at)));
+}
+
+function renderLivePreview(){
+  const company = companyById(state.company);
+  if(!state.platform || !company.platforms.includes(state.platform)){
+    state.platform = company.platforms[0];
+  }
+  const meta = PLATFORM_META[state.platform];
+  const content = $('#content');
+  const isYt = meta.kind === 'yt';
+
+  content.innerHTML = `
+    <div class="toolbar-row">
+      <div class="platform-tabs">
+        ${company.platforms.map(p => `
+          <button class="platform-tab ${p===state.platform?'active':''}" data-platform="${p}">
+            ${PLATFORM_META[p].label}
+          </button>`).join('')}
+      </div>
+      ${isYt
+        ? `<button class="btn ghost small" id="refreshYtBtn">↻ Refresh from YouTube</button>`
+        : `<button class="btn small" id="addCurrentBtn">+ Add current post</button>`
+      }
+    </div>
+    <div style="color:var(--text-dim);font-size:12.5px;margin-bottom:16px;max-width:640px;">
+      This is what ${company.name}'s ${meta.label} page looks like today, with anything marked <b style="color:var(--text)">Ready</b> or <b style="color:var(--text)">Scheduled</b> dropped in at the top so you can see how it'll look once it's live.
+    </div>
+    <div id="liveArea"></div>
+  `;
+
+  $all('.platform-tab', content).forEach(btn=>{
+    btn.addEventListener('click', ()=>{ state.platform = btn.dataset.platform; renderLivePreview(); });
+  });
+  if(isYt){
+    $('#refreshYtBtn').addEventListener('click', async ()=>{
+      await loadYoutubeForCompany(state.company);
+      renderLiveArea();
+    });
+  } else {
+    $('#addCurrentBtn').addEventListener('click', ()=> openAddCurrentPostModal());
+  }
+
+  renderLiveArea();
+  if(isYt && !state.ytCache[state.company]){
+    loadYoutubeForCompany(state.company).then(renderLiveArea);
+  }
+}
+
+function renderLiveArea(){
+  const area = $('#liveArea');
+  if(!area) return;
+  const company = companyById(state.company);
+  const meta = PLATFORM_META[state.platform];
+  const upcoming = upcomingPostsFor(state.company, state.platform);
+
+  if(meta.kind === 'yt'){
+    area.innerHTML = renderYtLive(company, upcoming);
+  } else if(meta.kind === 'ig'){
+    area.innerHTML = renderGridLive(company, upcoming, 'grid3', 'grid3-tile');
+  } else if(meta.kind === 'vert'){
+    area.innerHTML = renderGridLive(company, upcoming, 'grid-vert', 'grid-vert-tile');
+  } else if(meta.kind === 'li'){
+    area.innerHTML = renderLiLive(company, upcoming);
+  }
+  bindLiveAreaEvents(area);
+}
+
+function bindLiveAreaEvents(area){
+  $all('.js-open-post', area).forEach(el=>{
+    el.addEventListener('click', ()=> openEditor(el.dataset.id));
+  });
+  $all('.js-remove-current', area).forEach(el=>{
+    el.addEventListener('click', async (e)=>{
+      e.stopPropagation();
+      if(!confirm('Remove this from the current-page preview?')) return;
+      try{
+        await deleteCurrentPostRemote(el.dataset.id);
+        state.currentPosts = state.currentPosts.filter(p=>p.id!==el.dataset.id);
+        renderLiveArea();
+      }catch(err){ console.error(err); showToast('Failed to remove'); }
+    });
+  });
+}
+
+function profileHeaderHtml(company){
+  return `
+    <div class="profile-header">
+      <div class="avatar-circ" style="background:${company.color}">${company.initials}</div>
+      <div>
+        <div class="profile-name">${company.name}</div>
+        <div class="profile-handle">${company.handle}</div>
+        <div class="profile-stats"><span><b>—</b> posts</span><span><b>—</b> followers</span></div>
+      </div>
+    </div>
+  `;
+}
+
+function firstThumbOf(post){
+  if(post.thumbnail_url) return { url: post.thumbnail_url, video: false };
+  const items = mediaItemsOf(post);
+  const first = items[0];
+  if(!first) return null;
+  if(first.type === 'link') return null;
+  return { url: first.url, video: first.media_type === 'video' };
+}
+
+function renderGridLive(company, upcoming, gridClass, tileClass){
+  const current = currentPostsFor(company.id, state.platform);
+  const upcomingTiles = upcoming.map(p=>{
+    const thumb = firstThumbOf(p);
+    const inner = thumb ? (thumb.video ? `<video src="${thumb.url}" muted></video>` : `<img src="${thumb.url}">`) : `<div class="no-media-ph">+</div>`;
+    return `<div class="${tileClass} js-open-post" data-id="${p.id}"><span class="upcoming-badge">Upcoming</span>${inner}<div class="tile-cap">${escapeHtml((p.caption||'').slice(0,60))}</div></div>`;
+  }).join('');
+  const currentTiles = current.map(p=>{
+    return `<div class="${tileClass}" title="${escapeHtml(p.caption||'')}">
+      ${p.thumbnail_url ? `<img src="${p.thumbnail_url}">` : `<div class="no-media-ph">🖼</div>`}
+      <div class="tile-cap">${escapeHtml((p.caption||'').slice(0,60))}</div>
+      <button type="button" class="mi-btn js-remove-current" data-id="${p.id}" style="position:absolute;top:6px;right:6px;background:rgba(0,0,0,0.6);color:#fff;border-radius:6px;z-index:7;">✕</button>
+    </div>`;
+  }).join('');
+  const body = (upcomingTiles + currentTiles) || `<div class="empty-state" style="grid-column:1/-1">No posts yet — add a current post or mark one Ready/Scheduled in Previsualize.</div>`;
+  return `<div class="live-wrap">${profileHeaderHtml(company)}<div class="${gridClass}">${body}</div></div>`;
+}
+
+function renderYtLive(company, upcoming){
+  const cache = state.ytCache[company.id];
+  const upcomingRows = upcoming.map(p=>{
+    const thumb = firstThumbOf(p);
+    const inner = thumb ? (thumb.video ? `<video src="${thumb.url}" muted></video>` : `<img src="${thumb.url}">`) : `<div class="no-media-ph">+</div>`;
+    return `
+      <div class="yt-live-row js-open-post" data-id="${p.id}">
+        <div class="yt-live-thumb"><span class="upcoming-badge">Upcoming</span>${inner}</div>
+        <div><div class="yt-live-title">${escapeHtml(p.caption || '(untitled video)')}</div><div class="yt-live-sub">${company.handle} · ${p.scheduled_date ? fmtDate(p.scheduled_date) : 'unscheduled'}</div></div>
+      </div>
+    `;
+  }).join('');
+
+  let liveSection;
+  if(!cache || cache.status === 'unconfigured'){
+    liveSection = `<div class="config-note">Connect your YouTube channel to see your real, currently-live videos here.<br><button class="btn ghost small" id="openSettingsFromLive">Open Settings</button></div>`;
+  } else if(cache.status === 'loading'){
+    liveSection = `<div class="config-note">Loading your channel's videos…</div>`;
+  } else if(cache.status === 'error'){
+    liveSection = `<div class="config-note">Couldn't load YouTube videos: ${escapeHtml(cache.error)}<br><button class="btn ghost small" id="openSettingsFromLive">Check Settings</button></div>`;
+  } else {
+    liveSection = cache.videos.map(v => `
+      <div class="yt-live-row">
+        <div class="yt-live-thumb"><img src="${v.thumb}"></div>
+        <div><div class="yt-live-title">${escapeHtml(v.title)}</div><div class="yt-live-sub">${company.handle} · ${new Date(v.publishedAt).toLocaleDateString()}</div></div>
+      </div>
+    `).join('') || `<div class="empty-state">No videos found on that channel yet.</div>`;
+  }
+
+  setTimeout(()=>{
+    const btn = document.getElementById('openSettingsFromLive');
+    if(btn) btn.addEventListener('click', openSettingsModal);
+  }, 0);
+
+  return `<div class="live-wrap wide">${profileHeaderHtml(company)}${upcomingRows}${liveSection}</div>`;
+}
+
+function renderLiLive(company, upcoming){
+  const current = currentPostsFor(company.id, state.platform);
+  const upcomingCards = upcoming.map(p => `<div class="js-open-post" data-id="${p.id}" style="position:relative;margin-bottom:12px;"><span class="upcoming-badge" style="top:8px;left:auto;right:8px;">Upcoming</span>${renderLiCard(p, company)}</div>`).join('');
+  const currentCards = current.map(p => `
+    <div class="li-live-compact">
+      ${p.thumbnail_url ? `<img src="${p.thumbnail_url}">` : ''}
+      <div class="cap">${escapeHtml(p.caption||'')}</div>
+      <button type="button" class="mi-btn js-remove-current" data-id="${p.id}" style="margin-left:auto;">✕</button>
+    </div>
+  `).join('');
+  const body = (upcomingCards + currentCards) || `<div class="empty-state">No posts yet — add a current post or mark one Ready/Scheduled in Previsualize.</div>`;
+  return `<div class="live-wrap">${profileHeaderHtml(company)}${body}</div>`;
+}
+
+function openAddCurrentPostModal(){
+  const company = companyById(state.company);
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal" style="max-width:460px;">
+      <button class="close-x">&times;</button>
+      <h2>Add current ${PLATFORM_META[state.platform].label} post</h2>
+      <div class="sub">${company.name} — this represents something already live today, for reference only.</div>
+      <div class="field">
+        <label>Thumbnail</label>
+        <div class="add-current-row">
+          <button type="button" class="btn ghost small" id="curUploadBtn">+ Upload image</button>
+          <button type="button" class="btn ghost small" id="curLinkBtn">+ Paste image URL</button>
+        </div>
+        <input type="file" id="curHiddenFile" accept="image/*" style="display:none">
+        <div class="upload-status" id="curUploadStatus"></div>
+      </div>
+      <div class="field">
+        <label>Caption / title</label>
+        <textarea id="curCaption" placeholder="What this post says..."></textarea>
+      </div>
+      <div class="modal-actions">
+        <div></div>
+        <div class="right">
+          <button class="btn ghost small" id="curCancelBtn">Cancel</button>
+          <button class="btn small" id="curSaveBtn">Add</button>
+        </div>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  let thumbUrl = '';
+
+  $('.close-x', overlay).addEventListener('click', ()=> overlay.remove());
+  $('#curCancelBtn', overlay).addEventListener('click', ()=> overlay.remove());
+  overlay.addEventListener('click', (e)=>{ if(e.target === overlay) overlay.remove(); });
+
+  $('#curUploadBtn', overlay).addEventListener('click', ()=> $('#curHiddenFile', overlay).click());
+  $('#curLinkBtn', overlay).addEventListener('click', ()=>{
+    const link = prompt('Paste an image URL:');
+    if(link && link.trim()){ thumbUrl = link.trim(); $('#curUploadStatus', overlay).textContent = 'Using pasted URL'; }
+  });
+  $('#curHiddenFile', overlay).addEventListener('change', async (e)=>{
+    const file = e.target.files[0];
+    if(!file) return;
+    $('#curUploadStatus', overlay).textContent = 'Uploading…';
+    try{
+      const { publicUrl } = await uploadToStorage(file, `${state.company}/${state.platform}/current`);
+      thumbUrl = publicUrl;
+      $('#curUploadStatus', overlay).textContent = 'Uploaded: ' + file.name;
+    }catch(err){ console.error(err); $('#curUploadStatus', overlay).textContent = 'Upload failed — try again.'; }
+  });
+
+  $('#curSaveBtn', overlay).addEventListener('click', async ()=>{
+    try{
+      const created = await createCurrentPost({
+        company_id: state.company,
+        platform: state.platform,
+        thumbnail_url: thumbUrl || null,
+        caption: $('#curCaption', overlay).value,
+        source: 'manual',
+      });
+      state.currentPosts.unshift(created);
+      overlay.remove();
+      renderLiveArea();
+      showToast('Added');
+    }catch(err){ console.error(err); showToast('Failed to add'); }
+  });
+}
+
+/* ============ SETTINGS MODAL ============ */
+function openSettingsModal(){
+  const ytCompanies = COMPANIES.filter(c => c.platforms.includes('youtube'));
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal" style="max-width:520px;">
+      <button class="close-x">&times;</button>
+      <h2>Settings</h2>
+      <div class="sub">Shared across your whole team — saved to Supabase.</div>
+      <div class="section-heading" style="margin-top:0;">YouTube (live data)</div>
+      <div class="field">
+        <label>YouTube Data API key</label>
+        <input type="text" id="s_ytkey" placeholder="AIza..." value="${escapeHtml(state.settings.youtube_api_key||'')}">
+      </div>
+      ${ytCompanies.map(c=>`
+        <div class="field">
+          <label>${c.name} — Channel ID</label>
+          <input type="text" id="s_ytch_${c.id}" placeholder="UCxxxxxxxxxxxxxxxxxxxxxx" value="${escapeHtml(state.settings['youtube_channel__'+c.id]||'')}">
+        </div>
+      `).join('')}
+      <div style="font-size:11.5px;color:var(--text-dim);margin-bottom:14px;line-height:1.5;">
+        Get a free API key from Google Cloud Console (enable "YouTube Data API v3"), and find each Channel ID on the channel's "About" page → Share channel → Copy channel ID.
+      </div>
+      <div class="modal-actions">
+        <div></div>
+        <div class="right">
+          <button class="btn ghost small" id="setCancelBtn">Close</button>
+          <button class="btn small" id="setSaveBtn">Save settings</button>
+        </div>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  $('.close-x', overlay).addEventListener('click', ()=> overlay.remove());
+  $('#setCancelBtn', overlay).addEventListener('click', ()=> overlay.remove());
+  overlay.addEventListener('click', (e)=>{ if(e.target === overlay) overlay.remove(); });
+
+  $('#setSaveBtn', overlay).addEventListener('click', async ()=>{
+    $('#setSaveBtn', overlay).disabled = true;
+    $('#setSaveBtn', overlay).textContent = 'Saving…';
+    try{
+      const updates = [['youtube_api_key', $('#s_ytkey', overlay).value.trim()]];
+      ytCompanies.forEach(c=>{
+        updates.push(['youtube_channel__'+c.id, $('#s_ytch_'+c.id, overlay).value.trim()]);
+      });
+      for(const [key, value] of updates){
+        await saveSetting(key, value);
+        state.settings[key] = value;
+      }
+      state.ytCache = {};
+      overlay.remove();
+      showToast('Settings saved');
+      renderAll();
+    }catch(err){
+      console.error(err);
+      $('#setSaveBtn', overlay).disabled = false;
+      $('#setSaveBtn', overlay).textContent = 'Save settings';
+      showToast('Failed to save settings');
+    }
+  });
+}
+
+init();
+</script>
+</body>
+</html>
