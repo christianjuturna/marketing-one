@@ -86,6 +86,18 @@
   .insight-item.up .dot{background:#22c55e;}
   .insight-item.down .dot{background:#ef4444;}
   .insight-item.warn .dot{background:#f59e0b;}
+  .content-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:14px;margin-top:12px;}
+  .content-card{background:var(--panel-2);border:1px solid var(--border);border-radius:10px;overflow:hidden;display:flex;flex-direction:column;}
+  .content-card .thumb-wrap{position:relative;width:100%;background:#000;overflow:hidden;}
+  .content-card .thumb-wrap.thumb-16x9{aspect-ratio:16/9;}
+  .content-card .thumb-wrap.thumb-1x1{aspect-ratio:1/1;}
+  .content-card .thumb-wrap img{width:100%;height:100%;object-fit:cover;display:block;}
+  .content-card.top .thumb-wrap::after{content:'🏆 Top';position:absolute;top:6px;left:6px;background:rgba(0,0,0,0.72);color:#fff;font-size:10.5px;font-weight:700;padding:3px 7px;border-radius:6px;}
+  .content-card .cc-body{padding:10px;display:flex;flex-direction:column;gap:6px;flex:1;}
+  .content-card .cc-title{font-size:12.5px;font-weight:600;line-height:1.35;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;color:var(--text);}
+  .content-card .cc-date{font-size:11px;color:var(--text-dim);}
+  .content-card .cc-stats{display:flex;gap:10px;font-size:11.5px;color:var(--text-dim);margin-top:auto;flex-wrap:wrap;padding-top:4px;}
+  .content-card .cc-stats b{color:var(--text);}
 
   /* ---------- CRM module ---------- */
   .kanban{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;align-items:start;}
@@ -354,10 +366,10 @@ const STORAGE = SUPABASE_URL + '/storage/v1';
 const BUCKET = 'post-media';
 
 const COMPANIES = [
-  { id:'origin_point', name:'Origin Point', handle:'@originpoint', color:'#2563eb', initials:'OP',
-    platforms:['instagram','youtube','linkedin'] },
   { id:'b_story', name:'B Story', handle:'@bstory', color:'#ea580c', initials:'BS',
     platforms:['instagram','youtube','tiktok','youtube_shorts'] },
+  { id:'origin_point', name:'Origin Point', handle:'@originpoint', color:'#2563eb', initials:'OP',
+    platforms:['instagram','youtube','linkedin'] },
   { id:'back_to_one', name:'Back To One', handle:'@backtoone', color:'#0d9488', initials:'B1',
     platforms:['instagram','youtube','linkedin'] },
 ];
@@ -389,7 +401,7 @@ const ACTIVITY_LABEL = { note:'Note', call:'Call', email:'Email', linkedin:'Link
 /* ============ STATE ============ */
 let state = {
   module: 'content',
-  company: 'origin_point',
+  company: 'b_story',
   mainTab: 'previz',
   platform: null,
   statusFilter: 'all',
@@ -522,13 +534,36 @@ async function fetchYoutubeVideos(channelId, apiKey){
   const plRes = await fetch(`https://www.googleapis.com/youtube/v3/playlistItems?part=snippet&maxResults=12&playlistId=${encodeURIComponent(uploadsPlaylist)}&key=${encodeURIComponent(apiKey)}`);
   const plJson = await plRes.json();
   if(!plRes.ok) throw new Error(plJson.error && plJson.error.message || 'YouTube video list failed');
-  return (plJson.items || []).map(it => ({
+  const videos = (plJson.items || []).map(it => ({
     id: it.snippet.resourceId.videoId,
     title: it.snippet.title,
     thumb: (it.snippet.thumbnails.medium || it.snippet.thumbnails.default || {}).url,
     publishedAt: it.snippet.publishedAt,
     url: 'https://www.youtube.com/watch?v=' + it.snippet.resourceId.videoId,
+    views: null, likes: null, comments: null,
   }));
+
+  // Enrich with per-video performance stats (views/likes/comments) in one batched call.
+  const ids = videos.map(v=>v.id).filter(Boolean).join(',');
+  if(ids){
+    try{
+      const statsRes = await fetch(`https://www.googleapis.com/youtube/v3/videos?part=statistics&id=${encodeURIComponent(ids)}&key=${encodeURIComponent(apiKey)}`);
+      const statsJson = await statsRes.json();
+      if(statsRes.ok){
+        const byId = {};
+        (statsJson.items || []).forEach(it => { byId[it.id] = it.statistics || {}; });
+        videos.forEach(v => {
+          const s = byId[v.id];
+          if(s){
+            v.views = Number(s.viewCount || 0);
+            v.likes = Number(s.likeCount || 0);
+            v.comments = Number(s.commentCount || 0);
+          }
+        });
+      }
+    }catch(err){ console.error('YouTube per-video stats failed', err); }
+  }
+  return videos;
 }
 
 async function fetchYoutubeChannelStats(channelId, apiKey){
@@ -677,7 +712,7 @@ async function loadYoutubeForCompany(companyId){
 
 /* ---- Instagram Graph API (real, live account media) ---- */
 async function fetchInstagramMedia(igUserId, accessToken){
-  const res = await fetch(`https://graph.instagram.com/v21.0/${encodeURIComponent(igUserId)}/media?fields=id,caption,media_type,media_url,thumbnail_url,permalink,timestamp&limit=12&access_token=${encodeURIComponent(accessToken)}`);
+  const res = await fetch(`https://graph.instagram.com/v21.0/${encodeURIComponent(igUserId)}/media?fields=id,caption,media_type,media_url,thumbnail_url,permalink,timestamp,like_count,comments_count&limit=12&access_token=${encodeURIComponent(accessToken)}`);
   const json = await res.json();
   if(!res.ok) throw new Error(json.error && json.error.message || 'Instagram media lookup failed');
   return (json.data || []).map(it => ({
@@ -687,6 +722,8 @@ async function fetchInstagramMedia(igUserId, accessToken){
     thumb: it.media_type === 'VIDEO' ? (it.thumbnail_url || it.media_url) : it.media_url,
     permalink: it.permalink,
     timestamp: it.timestamp,
+    likes: it.like_count != null ? Number(it.like_count) : null,
+    comments: it.comments_count != null ? Number(it.comments_count) : null,
   }));
 }
 
@@ -2191,11 +2228,118 @@ function buildMeetingSummaryText(company, ytAsc, igAsc, rangeKey, takeaways){
   return out;
 }
 
+/* ---- Content-level detail: real videos/posts with thumbnails + performance ---- */
+function buildContentTakeaways(hasYt, hasIg, ytCache, igMediaCache){
+  const items = [];
+  if(hasYt && ytCache && ytCache.status === 'ok' && ytCache.videos.length){
+    const top = ytCache.videos.slice().sort((a,b)=>(b.views||0)-(a.views||0))[0];
+    if(top && top.views != null){
+      items.push({ text:`Top YouTube video right now: "${top.title}" with ${fmtNum(top.views)} views.`, kind:'up' });
+    }
+  }
+  if(hasIg && igMediaCache && igMediaCache.status === 'ok' && igMediaCache.media.length){
+    const top = igMediaCache.media.slice().sort((a,b)=>(b.likes||0)-(a.likes||0))[0];
+    if(top && top.likes != null){
+      items.push({ text:`Top Instagram post right now: "${(top.caption||'(no caption)').slice(0,60)}" with ${fmtNum(top.likes)} likes.`, kind:'up' });
+    }
+  }
+  return items;
+}
+
+function contentSectionHtml({ title, refreshId, unconfigured, configNote, cache, items, renderCard }){
+  let body;
+  if(unconfigured){
+    body = `<div class="sub">${configNote}</div>`;
+  } else if(!cache || cache.status === 'loading'){
+    body = `<div class="sub">Loading recent content…</div>`;
+  } else if(cache.status === 'error'){
+    body = `<div class="sub" style="color:#ef4444;">Couldn't load content: ${escapeHtml(cache.error)}</div>`;
+  } else if(items.length === 0){
+    body = `<div class="sub">No posts found yet.</div>`;
+  } else {
+    body = `<div class="content-grid">${items.map((it,i)=>renderCard(it, i===0)).join('')}</div>`;
+  }
+  return `
+    <div class="report-panel">
+      <div class="toolbar-row" style="margin-bottom:2px;">
+        <h3 style="margin:0;">${title}</h3>
+        ${(!unconfigured && refreshId) ? `<button class="btn ghost small" id="${refreshId}">↻ Refresh content</button>` : ''}
+      </div>
+      ${body}
+    </div>
+  `;
+}
+
+function renderContentPerformance(company, hasYt, hasIg, igConfigured){
+  let out = '';
+
+  if(hasYt){
+    const cache = state.ytCache[company.id];
+    const unconfigured = !state.settings.youtube_api_key || !state.settings['youtube_channel__'+company.id];
+    const items = (cache && cache.status==='ok') ? cache.videos.slice().sort((a,b)=>(b.views||0)-(a.views||0)) : [];
+    out += contentSectionHtml({
+      title: 'Recent YouTube videos',
+      refreshId: 'refreshYtContentBtn',
+      unconfigured,
+      configNote: 'Connect a YouTube channel in Settings to see video-level performance here.',
+      cache, items,
+      renderCard: (v, isTop) => `
+        <div class="content-card ${isTop && v.views!=null ?'top':''}">
+          <div class="thumb-wrap thumb-16x9"><a href="${v.url}" target="_blank" rel="noopener"><img src="${v.thumb}" loading="lazy"></a></div>
+          <div class="cc-body">
+            <div class="cc-title" title="${escapeHtml(v.title)}">${escapeHtml(v.title)}</div>
+            <div class="cc-date">${v.publishedAt ? new Date(v.publishedAt).toLocaleDateString() : ''}</div>
+            <div class="cc-stats">
+              <span>👁 <b>${fmtNum(v.views)}</b></span>
+              <span>👍 <b>${fmtNum(v.likes)}</b></span>
+              <span>💬 <b>${fmtNum(v.comments)}</b></span>
+            </div>
+          </div>
+        </div>`,
+    });
+  }
+
+  if(hasIg){
+    const cache = state.igMediaCache[company.id];
+    const unconfigured = !igConfigured;
+    const items = (cache && cache.status==='ok') ? cache.media.slice().sort((a,b)=>(b.likes||0)-(a.likes||0)) : [];
+    out += contentSectionHtml({
+      title: 'Recent Instagram posts',
+      refreshId: 'refreshIgContentBtn',
+      unconfigured,
+      configNote: 'Connect an Instagram access token + Business Account ID in Settings to see post-level performance here.',
+      cache, items,
+      renderCard: (m, isTop) => `
+        <div class="content-card ${isTop && m.likes!=null ?'top':''}">
+          <div class="thumb-wrap thumb-1x1"><a href="${m.permalink}" target="_blank" rel="noopener"><img src="${m.thumb}" loading="lazy"></a></div>
+          <div class="cc-body">
+            <div class="cc-title" title="${escapeHtml(m.caption)}">${escapeHtml((m.caption||'(no caption)').slice(0,80))}</div>
+            <div class="cc-date">${m.timestamp ? new Date(m.timestamp).toLocaleDateString() : ''}</div>
+            <div class="cc-stats">
+              <span>❤️ <b>${fmtNum(m.likes)}</b></span>
+              <span>💬 <b>${fmtNum(m.comments)}</b></span>
+            </div>
+          </div>
+        </div>`,
+    });
+  }
+
+  return out;
+}
+
 function renderReportsModule(){
   const content = $('#content');
   const company = companyById(state.company);
   content.innerHTML = `<div class="report-panel"><div class="sub">Loading analytics for ${escapeHtml(company.name)}…</div></div>`;
-  ensureMetricsLoaded(state.company).then(()=>{
+  const igConfigured = company.platforms.includes('instagram') && state.settings['instagram_access_token__'+company.id] && state.settings['instagram_ig_user_id__'+company.id];
+  const tasks = [ensureMetricsLoaded(state.company)];
+  if(company.platforms.includes('youtube') && state.settings.youtube_api_key && state.settings['youtube_channel__'+company.id] && !state.ytCache[state.company]){
+    tasks.push(loadYoutubeForCompany(state.company));
+  }
+  if(igConfigured && !state.igMediaCache[state.company]){
+    tasks.push(loadInstagramForCompany(state.company));
+  }
+  Promise.all(tasks).then(()=>{
     if(state.module === 'reports' && state.company === company.id) paintReportsModule();
   });
 }
@@ -2210,6 +2354,7 @@ function paintReportsModule(){
   const latestIg = igRows[igRows.length-1];
   const ytCache = state.ytCache[company.id];
   const igCache = (state.igCache = state.igCache || {})[company.id];
+  const igMediaCache = state.igMediaCache[company.id];
   const hasYt = company.platforms.includes('youtube');
   const hasIg = company.platforms.includes('instagram');
   const igConfigured = state.settings['instagram_access_token__'+company.id] && state.settings['instagram_ig_user_id__'+company.id];
@@ -2218,7 +2363,8 @@ function paintReportsModule(){
   const igChartRows = filterRowsByRange(igRows, rangeKey);
   const ytGrowth = hasYt ? computeGrowth(ytRows, rangeKey) : null;
   const igGrowth = hasIg ? computeGrowth(igRows, rangeKey) : null;
-  const takeaways = buildTakeaways(hasYt, hasIg, ytRows, igRows, rangeKey);
+  const takeaways = buildTakeaways(hasYt, hasIg, ytRows, igRows, rangeKey)
+    .concat(buildContentTakeaways(hasYt, hasIg, ytCache, igMediaCache));
 
   content.innerHTML = `
     <div class="toolbar-row">
@@ -2273,6 +2419,8 @@ function paintReportsModule(){
       ${igCache && igCache.status==='error' ? `<div class="sub" style="color:#ef4444;">${escapeHtml(igCache.error)}</div>` : ''}
       ${hasIg && !igConfigured ? `<div class="sub">Add an Instagram access token + Business Account ID in <a href="#" id="igSettingsLink">Settings</a> to pull live numbers.</div>` : ''}
     </div>
+
+    ${renderContentPerformance(company, hasYt, hasIg, igConfigured)}
 
     <div class="report-panel">
       <h3>Snapshot log</h3>
@@ -2354,6 +2502,20 @@ function paintReportsModule(){
     }finally{
       if(refreshIgBtn){ refreshIgBtn.disabled = false; refreshIgBtn.textContent = '↻ Pull live Instagram stats'; }
     }
+  });
+
+  const refreshYtContentBtn = $('#refreshYtContentBtn');
+  if(refreshYtContentBtn) refreshYtContentBtn.addEventListener('click', async ()=>{
+    refreshYtContentBtn.disabled = true; refreshYtContentBtn.textContent = 'Refreshing…';
+    await loadYoutubeForCompany(company.id);
+    paintReportsModule();
+  });
+
+  const refreshIgContentBtn = $('#refreshIgContentBtn');
+  if(refreshIgContentBtn) refreshIgContentBtn.addEventListener('click', async ()=>{
+    refreshIgContentBtn.disabled = true; refreshIgContentBtn.textContent = 'Refreshing…';
+    await loadInstagramForCompany(company.id);
+    paintReportsModule();
   });
 
   $('#addIgMetricBtn').addEventListener('click', ()=> openMetricEntryModal(company.id, 'instagram'));
