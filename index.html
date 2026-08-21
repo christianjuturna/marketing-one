@@ -89,6 +89,22 @@
   .lead-card .lmeta{font-size:11px;color:var(--text-dim);display:flex;justify-content:space-between;}
   .lead-card .lval{color:#22c55e;font-weight:700;}
 
+  /* ---------- Lead activity / conversation log ---------- */
+  .activity-log{max-height:220px;overflow-y:auto;margin-bottom:10px;}
+  .activity-row{display:flex;gap:10px;padding:9px 0;border-bottom:1px solid var(--border);}
+  .activity-row:last-child{border-bottom:none;}
+  .activity-type-badge{flex-shrink:0;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.03em;padding:3px 8px;border-radius:20px;background:var(--panel-2);color:var(--text-dim);height:fit-content;}
+  .activity-body{flex:1;}
+  .activity-content{font-size:12.5px;white-space:pre-wrap;line-height:1.4;}
+  .activity-meta{display:flex;justify-content:space-between;align-items:center;margin-top:3px;}
+  .activity-date{font-size:10.5px;color:var(--text-dim);}
+  .activity-del{background:none;border:none;color:var(--text-dim);font-size:11px;padding:0;}
+  .activity-del:hover{color:#ef4444;}
+  .activity-form{display:flex;flex-direction:column;gap:8px;}
+  .activity-form select{width:140px !important;background:var(--panel-2);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:8px;font-size:12px;}
+  .activity-form textarea{width:100%;min-height:44px;background:var(--panel-2);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:8px;font-size:12.5px;resize:vertical;}
+  .section-divider{border:none;border-top:1px solid var(--border);margin:16px 0;}
+
   /* ---------- Call Sheet module ---------- */
   .cs-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:14px;}
   .cs-card{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);padding:14px;cursor:pointer;}
@@ -356,6 +372,10 @@ const LEAD_STAGE_LABEL = { new:'New', contacted:'Contacted', won:'Won', lost:'Lo
 const CS_STATUS_LIST = ['idea','draft','ready','sent'];
 const CS_STATUS_LABEL = { idea:'Idea', draft:'Draft', ready:'Ready to send', sent:'Sent' };
 
+// Lead activity / conversation log entry types
+const ACTIVITY_TYPES = ['note','call','email','linkedin','meeting'];
+const ACTIVITY_LABEL = { note:'Note', call:'Call', email:'Email', linkedin:'LinkedIn', meeting:'Meeting' };
+
 /* ============ STATE ============ */
 let state = {
   module: 'content',
@@ -373,6 +393,7 @@ let state = {
   metricsLoaded: {},  // company_id -> bool
   leads: [],
   leadsLoaded: false,
+  leadActivities: {}, // lead_id -> [] of activity rows
   callsheet: {},       // company_id -> [] of callsheet rows
   callsheetLoaded: {}, // company_id -> bool
 };
@@ -560,6 +581,27 @@ async function updateLead(id, patch){
 }
 async function deleteLeadRemote(id){
   const res = await fetch(REST + '/leads?id=eq.' + id, { method:'DELETE', headers: sbHeaders() });
+  if(!res.ok) throw new Error('Delete failed: ' + await res.text());
+}
+
+/* ---- Lead activities (conversation / call / email log per lead) ---- */
+async function fetchLeadActivities(leadId){
+  const res = await fetch(REST + '/lead_activities?lead_id=eq.' + leadId + '&select=*&order=created_at.desc', { headers: sbHeaders() });
+  if(!res.ok) throw new Error('Failed to load activity: ' + res.status);
+  return res.json();
+}
+async function createLeadActivity(payload){
+  const res = await fetch(REST + '/lead_activities', {
+    method:'POST',
+    headers: sbHeaders({ 'Content-Type':'application/json', 'Prefer':'return=representation' }),
+    body: JSON.stringify(payload)
+  });
+  if(!res.ok) throw new Error('Create failed: ' + await res.text());
+  const rows = await res.json();
+  return rows[0];
+}
+async function deleteLeadActivityRemote(id){
+  const res = await fetch(REST + '/lead_activities?id=eq.' + id, { method:'DELETE', headers: sbHeaders() });
   if(!res.ok) throw new Error('Delete failed: ' + await res.text());
 }
 
@@ -2139,6 +2181,20 @@ function openLeadModal(id){
       </div>
       <div class="field"><label>Deal value ($, optional)</label><input type="text" id="l_value" value="${lead && lead.value != null ? lead.value : ''}"></div>
       <div class="field"><label>Notes</label><textarea id="l_notes">${escapeHtml(lead ? lead.notes||'' : '')}</textarea></div>
+      ${lead ? `
+        <hr class="section-divider">
+        <div class="field">
+          <label>Conversations &amp; activity</label>
+          <div class="activity-log" id="activityLog"><div class="sub">Loading…</div></div>
+          <div class="activity-form">
+            <select id="act_type">${ACTIVITY_TYPES.map(t=>`<option value="${t}">${ACTIVITY_LABEL[t]}</option>`).join('')}</select>
+            <textarea id="act_content" placeholder="What happened / was said..."></textarea>
+          </div>
+          <div style="display:flex;justify-content:flex-end;margin-top:8px;">
+            <button type="button" class="btn small" id="act_logBtn">Log it</button>
+          </div>
+        </div>
+      ` : ''}
       <div class="modal-actions">
         <div>${lead ? '<button class="btn danger small" id="lDeleteBtn">Delete</button>' : ''}</div>
         <div class="right">
@@ -2152,6 +2208,26 @@ function openLeadModal(id){
   $('.close-x', overlay).addEventListener('click', ()=> overlay.remove());
   $('#lCancelBtn', overlay).addEventListener('click', ()=> overlay.remove());
   overlay.addEventListener('click', (e)=>{ if(e.target === overlay) overlay.remove(); });
+
+  if(lead){
+    loadAndRenderActivity(overlay, lead.id);
+    $('#act_logBtn', overlay).addEventListener('click', async ()=>{
+      const content = $('#act_content', overlay).value.trim();
+      if(!content){ showToast('Write something first'); return; }
+      const type = $('#act_type', overlay).value;
+      const btn = $('#act_logBtn', overlay);
+      btn.disabled = true;
+      try{
+        const created = await createLeadActivity({ lead_id: lead.id, type, content });
+        state.leadActivities[lead.id] = state.leadActivities[lead.id] || [];
+        state.leadActivities[lead.id].unshift(created);
+        $('#act_content', overlay).value = '';
+        renderActivityLog(overlay, lead.id);
+        showToast('Logged');
+      }catch(err){ console.error(err); showToast('Failed to log'); }
+      finally{ btn.disabled = false; }
+    });
+  }
 
   const delBtn = $('#lDeleteBtn', overlay);
   if(delBtn) delBtn.addEventListener('click', async ()=>{
@@ -2190,6 +2266,50 @@ function openLeadModal(id){
       paintCrmModule();
       showToast('Saved');
     }catch(err){ console.error(err); showToast('Failed to save'); }
+  });
+}
+
+async function loadAndRenderActivity(overlay, leadId){
+  if(!state.leadActivities[leadId]){
+    try{ state.leadActivities[leadId] = await fetchLeadActivities(leadId); }
+    catch(err){ console.error(err); state.leadActivities[leadId] = []; }
+  }
+  if(document.body.contains(overlay)) renderActivityLog(overlay, leadId);
+}
+
+function fmtDateTime(iso){
+  if(!iso) return '';
+  const d = new Date(iso);
+  return d.toLocaleDateString(undefined, { month:'short', day:'numeric' }) + ' · ' + d.toLocaleTimeString(undefined, { hour:'numeric', minute:'2-digit' });
+}
+
+function renderActivityLog(overlay, leadId){
+  const log = $('#activityLog', overlay);
+  if(!log) return;
+  const rows = state.leadActivities[leadId] || [];
+  log.innerHTML = rows.length === 0
+    ? '<div class="sub">No conversations logged yet.</div>'
+    : rows.map(r=>`
+      <div class="activity-row">
+        <span class="activity-type-badge">${ACTIVITY_LABEL[r.type]||r.type}</span>
+        <div class="activity-body">
+          <div class="activity-content">${escapeHtml(r.content)}</div>
+          <div class="activity-meta">
+            <span class="activity-date">${fmtDateTime(r.created_at)}</span>
+            <button type="button" class="activity-del" data-id="${r.id}">Delete</button>
+          </div>
+        </div>
+      </div>
+    `).join('');
+  $all('.activity-del', log).forEach(btn=>{
+    btn.addEventListener('click', async ()=>{
+      const id = btn.dataset.id;
+      try{
+        await deleteLeadActivityRemote(id);
+        state.leadActivities[leadId] = state.leadActivities[leadId].filter(r=>r.id!==id);
+        renderActivityLog(overlay, leadId);
+      }catch(err){ console.error(err); showToast('Failed to delete'); }
+    });
   });
 }
 
