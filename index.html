@@ -532,6 +532,16 @@ async function fetchYoutubeChannelStats(channelId, apiKey){
   };
 }
 
+async function fetchInstagramStats(igUserId, accessToken){
+  const res = await fetch(`https://graph.instagram.com/v21.0/${encodeURIComponent(igUserId)}?fields=followers_count,media_count&access_token=${encodeURIComponent(accessToken)}`);
+  const json = await res.json();
+  if(!res.ok) throw new Error(json.error && json.error.message || 'Instagram stats lookup failed');
+  return {
+    followers: Number(json.followers_count || 0),
+    mediaCount: Number(json.media_count || 0),
+  };
+}
+
 /* ---- Metrics (per company, per platform, snapshot rows over time) ---- */
 async function fetchMetrics(companyId){
   const res = await fetch(REST + '/metrics?company_id=eq.' + encodeURIComponent(companyId) + '&select=*&order=period_date.asc', { headers: sbHeaders() });
@@ -1861,6 +1871,7 @@ function openAddCurrentPostModal(){
 /* ============ SETTINGS MODAL ============ */
 function openSettingsModal(){
   const ytCompanies = COMPANIES.filter(c => c.platforms.includes('youtube'));
+  const igCompanies = COMPANIES.filter(c => c.platforms.includes('instagram'));
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay';
   overlay.innerHTML = `
@@ -1882,6 +1893,22 @@ function openSettingsModal(){
       <div style="font-size:11.5px;color:var(--text-dim);margin-bottom:14px;line-height:1.5;">
         Get a free API key from Google Cloud Console (enable "YouTube Data API v3"), and find each Channel ID on the channel's "About" page → Share channel → Copy channel ID.
       </div>
+
+      <div class="section-heading">Instagram (live data)</div>
+      ${igCompanies.map(c=>`
+        <div class="field">
+          <label>${c.name} — Access token</label>
+          <input type="text" id="s_igtok_${c.id}" placeholder="IGAAT..." value="${escapeHtml(state.settings['instagram_access_token__'+c.id]||'')}">
+        </div>
+        <div class="field">
+          <label>${c.name} — Instagram Business Account ID</label>
+          <input type="text" id="s_iguid_${c.id}" placeholder="e.g. 17841438623355817" value="${escapeHtml(state.settings['instagram_ig_user_id__'+c.id]||'')}">
+        </div>
+      `).join('')}
+      <div style="font-size:11.5px;color:var(--text-dim);margin-bottom:14px;line-height:1.5;">
+        Generate a per-account access token in Meta for Developers (App → Instagram → API setup with Instagram login → Generate token). Each token is tied to one Instagram Business Account.
+      </div>
+
       <div class="modal-actions">
         <div></div>
         <div class="right">
@@ -1903,6 +1930,10 @@ function openSettingsModal(){
       const updates = [['youtube_api_key', $('#s_ytkey', overlay).value.trim()]];
       ytCompanies.forEach(c=>{
         updates.push(['youtube_channel__'+c.id, $('#s_ytch_'+c.id, overlay).value.trim()]);
+      });
+      igCompanies.forEach(c=>{
+        updates.push(['instagram_access_token__'+c.id, $('#s_igtok_'+c.id, overlay).value.trim()]);
+        updates.push(['instagram_ig_user_id__'+c.id, $('#s_iguid_'+c.id, overlay).value.trim()]);
       });
       for(const [key, value] of updates){
         await saveSetting(key, value);
@@ -1948,13 +1979,17 @@ function paintReportsModule(){
   const latestYt = ytRows[ytRows.length-1];
   const latestIg = igRows[igRows.length-1];
   const ytCache = state.ytCache[company.id];
+  const igCache = (state.igCache = state.igCache || {})[company.id];
   const hasYt = company.platforms.includes('youtube');
+  const hasIg = company.platforms.includes('instagram');
+  const igConfigured = state.settings['instagram_access_token__'+company.id] && state.settings['instagram_ig_user_id__'+company.id];
 
   content.innerHTML = `
     <div class="toolbar-row">
       <div style="font-weight:700;font-size:15px;">Reports &amp; Analytics — ${escapeHtml(company.name)}</div>
       <div style="display:flex;gap:8px;">
         ${hasYt ? `<button class="btn ghost small" id="refreshYtStatsBtn">↻ Pull live YouTube stats</button>` : ''}
+        ${hasIg && igConfigured ? `<button class="btn ghost small" id="refreshIgStatsBtn">↻ Pull live Instagram stats</button>` : ''}
         <button class="btn small" id="addIgMetricBtn">+ Log Instagram numbers</button>
       </div>
     </div>
@@ -1977,13 +2012,16 @@ function paintReportsModule(){
 
     <div class="report-panel">
       <h3>Instagram</h3>
-      <div class="sub">Manual entry — logged snapshots over time (followers, reach, engagement).</div>
+      <div class="sub">${hasIg ? 'Live stats via the Instagram Graph API (when configured), plus manual snapshots over time.' : 'Manual entry — logged snapshots over time (followers, reach, engagement).'}</div>
       <div class="stat-grid">
         <div class="stat-tile"><div class="label">Followers</div><div class="value">${fmtNum(latestIg ? latestIg.followers : null)}</div></div>
         <div class="stat-tile"><div class="label">Reach / Views</div><div class="value">${fmtNum(latestIg ? latestIg.views : null)}</div></div>
         <div class="stat-tile"><div class="label">Engagement</div><div class="value">${latestIg && latestIg.engagement != null ? latestIg.engagement + '%' : '—'}</div></div>
       </div>
       <div class="chart-wrap"><canvas id="igChart" style="width:100%;height:160px;"></canvas></div>
+      ${igCache && igCache.status==='loading' ? '<div class="sub">Pulling latest stats…</div>' : ''}
+      ${igCache && igCache.status==='error' ? `<div class="sub" style="color:#ef4444;">${escapeHtml(igCache.error)}</div>` : ''}
+      ${hasIg && !igConfigured ? `<div class="sub">Add an Instagram access token + Business Account ID in <a href="#" id="igSettingsLink">Settings</a> to pull live numbers.</div>` : ''}
     </div>
 
     <div class="report-panel">
@@ -2003,6 +2041,8 @@ function paintReportsModule(){
 
   const ytLink = $('#ytSettingsLink');
   if(ytLink) ytLink.addEventListener('click', (e)=>{ e.preventDefault(); openSettingsModal(); });
+  const igLink = $('#igSettingsLink');
+  if(igLink) igLink.addEventListener('click', (e)=>{ e.preventDefault(); openSettingsModal(); });
 
   const refreshBtn = $('#refreshYtStatsBtn');
   if(refreshBtn) refreshBtn.addEventListener('click', async ()=>{
@@ -2025,6 +2065,34 @@ function paintReportsModule(){
       showToast('Failed to pull YouTube stats');
     }finally{
       if(refreshBtn){ refreshBtn.disabled = false; refreshBtn.textContent = '↻ Pull live YouTube stats'; }
+    }
+  });
+
+  const refreshIgBtn = $('#refreshIgStatsBtn');
+  if(refreshIgBtn) refreshIgBtn.addEventListener('click', async ()=>{
+    const accessToken = state.settings['instagram_access_token__'+company.id];
+    const igUserId = state.settings['instagram_ig_user_id__'+company.id];
+    if(!accessToken || !igUserId){ openSettingsModal(); return; }
+    refreshIgBtn.disabled = true; refreshIgBtn.textContent = 'Pulling…';
+    state.igCache[company.id] = { status: 'loading' };
+    try{
+      const stats = await fetchInstagramStats(igUserId, accessToken);
+      const today = new Date().toISOString().slice(0,10);
+      const created = await createMetric({
+        company_id: company.id, platform:'instagram', period_date: today,
+        followers: stats.followers, views: stats.mediaCount, source:'instagram_api',
+      });
+      state.metrics[company.id].push(created);
+      state.igCache[company.id] = { status: 'ok' };
+      showToast('Snapshot saved');
+      paintReportsModule();
+    }catch(err){
+      console.error(err);
+      state.igCache[company.id] = { status: 'error', error: err.message || 'Failed to pull Instagram stats' };
+      showToast('Failed to pull Instagram stats');
+      paintReportsModule();
+    }finally{
+      if(refreshIgBtn){ refreshIgBtn.disabled = false; refreshIgBtn.textContent = '↻ Pull live Instagram stats'; }
     }
   });
 
