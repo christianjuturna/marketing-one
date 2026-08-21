@@ -389,6 +389,7 @@ let state = {
   settings: {},
   currentPosts: [],
   ytCache: {},
+  igMediaCache: {},
   metrics: {},        // company_id -> [] of metric rows
   metricsLoaded: {},  // company_id -> bool
   leads: [],
@@ -660,6 +661,38 @@ async function loadYoutubeForCompany(companyId){
   }catch(err){
     console.error(err);
     state.ytCache[companyId] = { status:'error', error: err.message };
+  }
+}
+
+/* ---- Instagram Graph API (real, live account media) ---- */
+async function fetchInstagramMedia(igUserId, accessToken){
+  const res = await fetch(`https://graph.instagram.com/v21.0/${encodeURIComponent(igUserId)}/media?fields=id,caption,media_type,media_url,thumbnail_url,permalink,timestamp&limit=12&access_token=${encodeURIComponent(accessToken)}`);
+  const json = await res.json();
+  if(!res.ok) throw new Error(json.error && json.error.message || 'Instagram media lookup failed');
+  return (json.data || []).map(it => ({
+    id: it.id,
+    caption: it.caption || '',
+    mediaType: it.media_type,
+    thumb: it.media_type === 'VIDEO' ? (it.thumbnail_url || it.media_url) : it.media_url,
+    permalink: it.permalink,
+    timestamp: it.timestamp,
+  }));
+}
+
+async function loadInstagramForCompany(companyId){
+  const accessToken = state.settings['instagram_access_token__' + companyId];
+  const igUserId = state.settings['instagram_ig_user_id__' + companyId];
+  if(!accessToken || !igUserId){
+    state.igMediaCache[companyId] = { status:'unconfigured' };
+    return;
+  }
+  state.igMediaCache[companyId] = { status:'loading' };
+  try{
+    const media = await fetchInstagramMedia(igUserId, accessToken);
+    state.igMediaCache[companyId] = { status:'ok', media, loadedAt: Date.now() };
+  }catch(err){
+    console.error(err);
+    state.igMediaCache[companyId] = { status:'error', error: err.message };
   }
 }
 
@@ -1632,6 +1665,8 @@ function renderLivePreview(){
   const meta = PLATFORM_META[state.platform];
   const content = $('#content');
   const isYt = meta.kind === 'yt';
+  const isIg = meta.kind === 'ig';
+  const igConfigured = isIg && !!(state.settings['instagram_access_token__'+company.id] && state.settings['instagram_ig_user_id__'+company.id]);
 
   content.innerHTML = `
     <div class="toolbar-row">
@@ -1643,7 +1678,9 @@ function renderLivePreview(){
       </div>
       ${isYt
         ? `<button class="btn ghost small" id="refreshYtBtn">↻ Refresh from YouTube</button>`
-        : `<button class="btn small" id="addCurrentBtn">+ Add current post</button>`
+        : igConfigured
+          ? `<button class="btn ghost small" id="refreshIgLiveBtn">↻ Refresh from Instagram</button>`
+          : `<button class="btn small" id="addCurrentBtn">+ Add current post</button>`
       }
     </div>
     <div style="color:var(--text-dim);font-size:12.5px;margin-bottom:16px;max-width:640px;">
@@ -1660,6 +1697,11 @@ function renderLivePreview(){
       await loadYoutubeForCompany(state.company);
       renderLiveArea();
     });
+  } else if(igConfigured){
+    $('#refreshIgLiveBtn').addEventListener('click', async ()=>{
+      await loadInstagramForCompany(state.company);
+      renderLiveArea();
+    });
   } else {
     $('#addCurrentBtn').addEventListener('click', ()=> openAddCurrentPostModal());
   }
@@ -1667,6 +1709,9 @@ function renderLivePreview(){
   renderLiveArea();
   if(isYt && !state.ytCache[state.company]){
     loadYoutubeForCompany(state.company).then(renderLiveArea);
+  }
+  if(igConfigured && !state.igMediaCache[state.company]){
+    loadInstagramForCompany(state.company).then(renderLiveArea);
   }
 }
 
@@ -1680,7 +1725,7 @@ function renderLiveArea(){
   if(meta.kind === 'yt'){
     area.innerHTML = renderYtLive(company, upcoming);
   } else if(meta.kind === 'ig'){
-    area.innerHTML = renderGridLive(company, upcoming, 'grid3', 'grid3-tile');
+    area.innerHTML = renderIgLive(company, upcoming);
   } else if(meta.kind === 'vert'){
     area.innerHTML = renderGridLive(company, upcoming, 'grid-vert', 'grid-vert-tile');
   } else if(meta.kind === 'li'){
@@ -1744,6 +1789,56 @@ function renderGridLive(company, upcoming, gridClass, tileClass){
   }).join('');
   const body = (upcomingTiles + currentTiles) || `<div class="empty-state" style="grid-column:1/-1">No posts yet — add a current post or mark one Ready/Scheduled in Previsualize.</div>`;
   return `<div class="live-wrap">${profileHeaderHtml(company)}<div class="${gridClass}">${body}</div></div>`;
+}
+
+function renderIgLive(company, upcoming){
+  const igConfigured = !!(state.settings['instagram_access_token__'+company.id] && state.settings['instagram_ig_user_id__'+company.id]);
+  const upcomingTiles = upcoming.map(p=>{
+    const thumb = firstThumbOf(p);
+    const inner = thumb ? (thumb.video ? `<video src="${thumb.url}" muted></video>` : `<img src="${thumb.url}">`) : `<div class="no-media-ph">+</div>`;
+    return `<div class="grid3-tile js-open-post" data-id="${p.id}"><span class="upcoming-badge">Upcoming</span>${inner}<div class="tile-cap">${escapeHtml((p.caption||'').slice(0,60))}</div></div>`;
+  }).join('');
+
+  if(!igConfigured){
+    // No live Instagram account connected yet — fall back to the manual "current post" workflow.
+    const current = currentPostsFor(company.id, 'instagram');
+    const currentTiles = current.map(p=>`
+      <div class="grid3-tile" title="${escapeHtml(p.caption||'')}">
+        ${p.thumbnail_url ? `<img src="${p.thumbnail_url}">` : `<div class="no-media-ph">🖼</div>`}
+        <div class="tile-cap">${escapeHtml((p.caption||'').slice(0,60))}</div>
+        <button type="button" class="mi-btn js-remove-current" data-id="${p.id}" style="position:absolute;top:6px;right:6px;background:rgba(0,0,0,0.6);color:#fff;border-radius:6px;z-index:7;">✕</button>
+      </div>`).join('');
+    const body = (upcomingTiles + currentTiles) || `<div class="empty-state" style="grid-column:1/-1">No posts yet — add a current post, or connect this account's Instagram API key in <a href="#" id="openSettingsFromLive">Settings</a> to show real posts here.</div>`;
+    setTimeout(()=>{
+      const btn = document.getElementById('openSettingsFromLive');
+      if(btn) btn.addEventListener('click', (e)=>{ e.preventDefault(); openSettingsModal(); });
+    }, 0);
+    return `<div class="live-wrap">${profileHeaderHtml(company)}<div class="grid3">${body}</div></div>`;
+  }
+
+  const cache = state.igMediaCache[company.id];
+  let liveTiles;
+  if(!cache || cache.status === 'loading'){
+    liveTiles = `<div class="config-note" style="grid-column:1/-1">Loading your Instagram posts…</div>`;
+  } else if(cache.status === 'error'){
+    liveTiles = `<div class="config-note" style="grid-column:1/-1">Couldn't load Instagram posts: ${escapeHtml(cache.error)}<br><button class="btn ghost small" id="openSettingsFromLive">Check Settings</button></div>`;
+  } else {
+    liveTiles = cache.media.map(m => `
+      <div class="grid3-tile" title="${escapeHtml(m.caption||'')}">
+        <a href="${m.permalink}" target="_blank" rel="noopener" style="display:block;width:100%;height:100%;">
+          <img src="${m.thumb}">
+        </a>
+        <div class="tile-cap">${escapeHtml((m.caption||'').slice(0,60))}</div>
+      </div>
+    `).join('') || `<div class="empty-state" style="grid-column:1/-1">No posts found on that account yet.</div>`;
+  }
+
+  setTimeout(()=>{
+    const btn = document.getElementById('openSettingsFromLive');
+    if(btn) btn.addEventListener('click', openSettingsModal);
+  }, 0);
+
+  return `<div class="live-wrap">${profileHeaderHtml(company)}<div class="grid3">${upcomingTiles}${liveTiles}</div></div>`;
 }
 
 function renderYtLive(company, upcoming){
