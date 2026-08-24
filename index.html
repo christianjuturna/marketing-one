@@ -58,9 +58,9 @@
   .main-tab.active{color:var(--text);border-bottom-color:var(--accent);}
 
   /* ---------- App shell (sidebar + main area) ---------- */
-  .app-shell{display:flex;align-items:flex-start;max-width:1400px;margin:0 auto;}
+  .app-shell{display:flex;align-items:flex-start;}
 
-  /* ---------- Marketing One module switcher (now a vertical sidebar) ---------- */
+  /* ---------- Marketing One module switcher (now a vertical sidebar, flush left) ---------- */
   .sidebar{display:flex;flex-direction:column;gap:5px;flex-shrink:0;width:220px;padding:20px 12px 40px 20px;position:sticky;top:var(--header-h, 90px);}
   .module-tab{padding:10px 14px;border-radius:10px;border:1px solid transparent;background:none;color:var(--text-dim);font-weight:700;font-size:13.5px;display:flex;align-items:center;gap:9px;width:100%;text-align:left;}
   .module-tab:hover{background:var(--panel);}
@@ -390,11 +390,11 @@
 
 <div class="app-shell">
   <nav class="sidebar" id="moduleTabs">
-    <button class="module-tab active" data-module="calendar">📅 Calendar</button>
-    <button class="module-tab" data-module="content">🗂 Content Command Center</button>
-    <button class="module-tab" data-module="reports">📊 Reports</button>
-    <button class="module-tab" data-module="crm">🤝 CRM</button>
-    <button class="module-tab" data-module="callsheet">📰 Call Sheet</button>
+    <button class="module-tab active" data-module="calendar">Calendar</button>
+    <button class="module-tab" data-module="content">Content Command Center</button>
+    <button class="module-tab" data-module="reports">Reports</button>
+    <button class="module-tab" data-module="crm">CRM</button>
+    <button class="module-tab" data-module="callsheet">Call Sheet</button>
   </nav>
   <div class="main-area">
     <div class="main-tabs" id="mainTabs">
