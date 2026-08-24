@@ -477,6 +477,8 @@ let state = {
   currentPosts: [],
   ytCache: {},
   igMediaCache: {},
+  igProfile: {},        // company_id -> real Instagram @username (once looked up)
+  igProfileLoaded: {},  // company_id -> bool (attempted, so we don't refetch every render)
   metrics: {},        // company_id -> [] of metric rows
   metricsLoaded: {},  // company_id -> bool
   reportsRange: '30', // '7' | '30' | '90' | 'all'
@@ -652,6 +654,38 @@ async function fetchInstagramStats(igUserId, accessToken){
     followers: Number(json.followers_count || 0),
     mediaCount: Number(json.media_count || 0),
   };
+}
+
+async function fetchInstagramUsername(igUserId, accessToken){
+  const res = await fetch(`https://graph.instagram.com/v21.0/${encodeURIComponent(igUserId)}?fields=username&access_token=${encodeURIComponent(accessToken)}`);
+  const json = await res.json();
+  if(!res.ok) throw new Error(json.error && json.error.message || 'Instagram profile lookup failed');
+  return json.username || null;
+}
+
+// Looks up the real connected Instagram @username once per company (cached in
+// state.igProfile) so previews can show it instead of the generic company handle
+// configured in COMPANIES. Safe to call repeatedly — it only fetches once.
+async function ensureIgProfileLoaded(companyId){
+  if(state.igProfileLoaded[companyId]) return;
+  const accessToken = state.settings['instagram_access_token__' + companyId];
+  const igUserId = state.settings['instagram_ig_user_id__' + companyId];
+  if(!accessToken || !igUserId) return;
+  state.igProfileLoaded[companyId] = true;
+  try{
+    const username = await fetchInstagramUsername(igUserId, accessToken);
+    if(username) state.igProfile[companyId] = username;
+  }catch(err){
+    console.error('Instagram profile lookup failed', err);
+  }
+}
+
+// The handle to display for Instagram previews: the real connected @username once
+// looked up, falling back to the generic handle configured for the company until then
+// (or if Instagram isn't connected for it at all).
+function igHandleFor(company){
+  const username = state.igProfile[company.id];
+  return username ? ('@' + username) : company.handle;
 }
 
 /* ---- Metrics (per company, per platform, snapshot rows over time) ---- */
@@ -1226,6 +1260,15 @@ function renderPreviz(){
   if(!state.platform || !company.platforms.includes(state.platform)){
     state.platform = company.platforms[0];
   }
+  // Look up the real connected Instagram @username once (cached) so the preview cards
+  // show it instead of the generic handle — re-render when/if it resolves.
+  if(state.platform === 'instagram' && !state.igProfileLoaded[state.company]){
+    ensureIgProfileLoaded(state.company).then(()=>{
+      if(state.module==='content' && state.mainTab==='previz' && state.platform==='instagram' && state.company===company.id){
+        renderPreviz();
+      }
+    });
+  }
   const content = $('#content');
   content.innerHTML = `
     <div class="toolbar-row">
@@ -1453,17 +1496,18 @@ function renderFeedOnly(){
 }
 
 function renderIgCard(post, company){
+  const handle = igHandleFor(company);
   return `
     <div class="ig-card">
       <div class="ig-header">
         <div class="avatar-circ" style="background:${company.color}">${company.initials}</div>
-        <div class="ig-handle">${company.handle}</div>
+        <div class="ig-handle">${handle}</div>
         <div class="ig-more">•••</div>
       </div>
       <div class="ig-media" style="${mediaAspectStyle(post,'ig')}">${renderMediaSlides(post)}</div>
       <div class="ig-actions">♡ <span>💬</span> <span>➤</span><span class="spacer"></span> 🔖</div>
       <div class="ig-likes">${post.status==='posted' ? 'View insights' : 'Preview — not yet posted'}</div>
-      <div class="ig-caption"><b>${company.handle}</b>${escapeHtml(post.caption || '(no caption yet)')} <span class="hashtags">${escapeHtml(post.hashtags||'')}</span></div>
+      <div class="ig-caption"><b>${handle}</b>${escapeHtml(post.caption || '(no caption yet)')} <span class="hashtags">${escapeHtml(post.hashtags||'')}</span></div>
     </div>
   `;
 }
