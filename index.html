@@ -62,6 +62,39 @@
   .module-tab{padding:8px 15px;border-radius:10px;border:1px solid var(--border);background:var(--panel);color:var(--text-dim);font-weight:700;font-size:13px;display:flex;align-items:center;gap:7px;}
   .module-tab.active{background:var(--accent);color:#fff;border-color:var(--accent);}
 
+  /* ---------- Calendar module ---------- */
+  .cal-toolbar{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:16px;}
+  .cal-nav{display:flex;align-items:center;gap:10px;}
+  .cal-month-label{font-size:16px;font-weight:800;min-width:170px;text-align:center;}
+  .cal-legend{display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:var(--text-dim);}
+  .cal-legend-item{display:flex;align-items:center;gap:6px;}
+  .cal-legend-item .sw{width:8px;height:8px;border-radius:50%;}
+  .cal-grid{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;}
+  .cal-weekdays{display:grid;grid-template-columns:repeat(7,1fr);border-bottom:1px solid var(--border);}
+  .cal-weekday{padding:8px;text-align:center;font-size:11px;font-weight:700;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.03em;}
+  .cal-days{display:grid;grid-template-columns:repeat(7,1fr);}
+  .cal-cell{border-right:1px solid var(--border);border-bottom:1px solid var(--border);padding:6px;display:flex;flex-direction:column;gap:5px;min-height:112px;}
+  .cal-cell:nth-child(7n){border-right:none;}
+  .cal-cell.out-month{background:rgba(255,255,255,0.015);}
+  .cal-cell.out-month .cal-daynum{opacity:0.4;}
+  .cal-cell.today{background:rgba(99,102,241,0.08);}
+  .cal-cell.today .cal-daynum{color:var(--accent);font-weight:800;}
+  .cal-daynum{font-size:12px;color:var(--text-dim);font-weight:700;}
+  .cal-chips{display:flex;flex-direction:column;gap:4px;overflow:hidden;}
+  .cal-chip{display:flex;gap:6px;align-items:center;background:var(--panel-2);border:1px solid var(--border);border-radius:7px;padding:3px 5px;cursor:pointer;transition:border-color .15s ease;}
+  .cal-chip:hover{border-color:var(--accent);}
+  .cal-chip-thumb{position:relative;width:22px;height:22px;border-radius:5px;overflow:hidden;background:#000;flex-shrink:0;}
+  .cal-chip-thumb img,.cal-chip-thumb video{width:100%;height:100%;object-fit:cover;display:block;}
+  .cal-chip-noimg{width:100%;height:100%;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:800;color:#fff;}
+  .cal-chip-dot{position:absolute;bottom:-1px;right:-1px;width:6px;height:6px;border-radius:50%;border:1px solid var(--panel-2);}
+  .cal-chip-text{display:flex;flex-direction:column;gap:1px;overflow:hidden;min-width:0;}
+  .cal-chip-cap{font-size:10.5px;color:var(--text-dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:112px;}
+  .cal-more{font-size:10.5px;color:var(--text-dim);padding:2px 4px;}
+  .mini-status{display:inline-block;padding:1px 6px;border-radius:5px;font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:0.03em;width:fit-content;}
+  .cal-unsched-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:14px;}
+  .cal-unsched-card{cursor:pointer;transition:border-color .15s ease;}
+  .cal-unsched-card:hover{border-color:var(--accent);}
+
   /* ---------- Reports module ---------- */
   .stat-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:20px;}
   .stat-tile{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);padding:16px;}
@@ -345,7 +378,8 @@
     </div>
   </div>
   <div class="module-tabs" id="moduleTabs">
-    <button class="module-tab active" data-module="content">🗂 Content Command Center</button>
+    <button class="module-tab active" data-module="calendar">📅 Calendar</button>
+    <button class="module-tab" data-module="content">🗂 Content Command Center</button>
     <button class="module-tab" data-module="reports">📊 Reports</button>
     <button class="module-tab" data-module="crm">🤝 CRM</button>
     <button class="module-tab" data-module="callsheet">📰 Call Sheet</button>
@@ -405,9 +439,11 @@ const ACTIVITY_LABEL = { note:'Note', call:'Call', email:'Email', linkedin:'Link
 
 /* ============ STATE ============ */
 let state = {
-  module: 'content',
+  module: 'calendar',
   company: 'b_story',
   mainTab: 'previz',
+  calendarMonth: new Date().getMonth(),
+  calendarYear: new Date().getFullYear(),
   platform: null,
   statusFilter: 'all',
   posts: [],
@@ -927,16 +963,169 @@ function updateChromeVisibility(){
   const mainTabs = $('#mainTabs');
   const companyTabs = $('#companyTabs');
   mainTabs.style.display = (state.module === 'content') ? '' : 'none';
-  companyTabs.style.display = (state.module === 'crm') ? 'none' : '';
+  // Calendar is a combined, all-companies view (like CRM), so the per-company tabs
+  // don't apply there either.
+  companyTabs.style.display = (state.module === 'crm' || state.module === 'calendar') ? 'none' : '';
 }
 
 function renderAll(){
+  if(state.module === 'calendar'){ renderCalendarModule(); return; }
   if(state.module === 'reports'){ renderReportsModule(); return; }
   if(state.module === 'crm'){ renderCrmModule(); return; }
   if(state.module === 'callsheet'){ renderCallsheetModule(); return; }
   if(state.mainTab === 'previz') renderPreviz();
   else if(state.mainTab === 'live') renderLivePreview();
   else renderPrep();
+}
+
+/* ============ CALENDAR MODULE ============ */
+const WEEKDAY_LABELS = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+
+function shiftCalendarMonth(delta){
+  let m = state.calendarMonth + delta;
+  let y = state.calendarYear;
+  if(m < 0){ m = 11; y -= 1; }
+  else if(m > 11){ m = 0; y += 1; }
+  state.calendarMonth = m;
+  state.calendarYear = y;
+  renderCalendarModule();
+}
+
+function calDayCellHtml(cell, postsByDate, todayStr){
+  if(!cell.inMonth){
+    return `<div class="cal-cell out-month"><div class="cal-daynum">${cell.dayNum}</div></div>`;
+  }
+  const posts = (postsByDate[cell.dateStr] || []).slice()
+    .sort((a,b)=> (a.company_id||'').localeCompare(b.company_id||''));
+  const isToday = cell.dateStr === todayStr;
+  const maxShow = 3;
+  const shown = posts.slice(0, maxShow);
+  const overflow = posts.length - shown.length;
+
+  const chips = shown.map(p=>{
+    const company = companyById(p.company_id) || {};
+    const thumb = firstThumbOf(p);
+    const thumbHtml = thumb
+      ? (thumb.video ? `<video src="${thumb.url}" muted></video>` : `<img src="${thumb.url}">`)
+      : `<div class="cal-chip-noimg" style="background:${company.color||'#333'}">${escapeHtml(company.initials||'?')}</div>`;
+    return `
+      <div class="cal-chip js-cal-open" data-id="${p.id}" title="${escapeHtml(p.caption||'(no caption yet)')}">
+        <div class="cal-chip-thumb">${thumbHtml}<span class="cal-chip-dot" style="background:${company.color||'#666'}"></span></div>
+        <div class="cal-chip-text">
+          <span class="mini-status status-${p.status}">${STATUS_LABEL[p.status]}</span>
+          <span class="cal-chip-cap">${escapeHtml((p.caption||'(no caption)').slice(0,40))}</span>
+        </div>
+      </div>`;
+  }).join('');
+  const moreHtml = overflow > 0 ? `<div class="cal-more">+${overflow} more</div>` : '';
+
+  return `
+    <div class="cal-cell ${isToday?'today':''}">
+      <div class="cal-daynum">${cell.dayNum}</div>
+      <div class="cal-chips">${chips}${moreHtml}</div>
+    </div>`;
+}
+
+function renderCalendarModule(){
+  if(!state.loaded){
+    $('#content').innerHTML = `<div class="empty-state">Loading…</div>`;
+    return;
+  }
+  const content = $('#content');
+  const y = state.calendarYear, m = state.calendarMonth;
+  const monthLabel = new Date(y, m, 1).toLocaleDateString(undefined, { month:'long', year:'numeric' });
+  const todayStr = new Date().toISOString().slice(0,10);
+
+  // Group every post (across all companies) by its scheduled date; anything without
+  // a date goes in the "unscheduled" tray instead of being dropped silently.
+  const postsByDate = {};
+  const unscheduled = [];
+  state.posts.forEach(p=>{
+    if(p.scheduled_date){
+      (postsByDate[p.scheduled_date] = postsByDate[p.scheduled_date] || []).push(p);
+    } else {
+      unscheduled.push(p);
+    }
+  });
+
+  const firstOfMonth = new Date(y, m, 1);
+  const startWeekday = firstOfMonth.getDay();
+  const daysInMonth = new Date(y, m+1, 0).getDate();
+  const daysInPrevMonth = new Date(y, m, 0).getDate();
+
+  const cells = [];
+  for(let i=0;i<startWeekday;i++){
+    cells.push({ dayNum: daysInPrevMonth - startWeekday + 1 + i, inMonth:false, dateStr:null });
+  }
+  for(let d=1; d<=daysInMonth; d++){
+    const dateStr = `${y}-${String(m+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+    cells.push({ dayNum: d, inMonth:true, dateStr });
+  }
+  let trailDay = 1;
+  while(cells.length < 42){
+    cells.push({ dayNum: trailDay++, inMonth:false, dateStr:null });
+  }
+
+  content.innerHTML = `
+    <div class="cal-toolbar">
+      <div class="cal-nav">
+        <button class="btn ghost small" id="calPrev">‹</button>
+        <div class="cal-month-label">${monthLabel}</div>
+        <button class="btn ghost small" id="calNext">›</button>
+        <button class="btn ghost small" id="calToday">Today</button>
+      </div>
+      <div class="cal-legend">
+        ${COMPANIES.map(c=>`<span class="cal-legend-item"><span class="sw" style="background:${c.color}"></span>${c.name}</span>`).join('')}
+      </div>
+    </div>
+    <div class="cal-grid">
+      <div class="cal-weekdays">${WEEKDAY_LABELS.map(w=>`<div class="cal-weekday">${w}</div>`).join('')}</div>
+      <div class="cal-days">${cells.map(c=>calDayCellHtml(c, postsByDate, todayStr)).join('')}</div>
+    </div>
+    <div class="section-heading" style="margin-top:28px;">Unscheduled — ideas &amp; drafts</div>
+    <div class="cal-unsched-grid" id="calUnsched"></div>
+  `;
+
+  $('#calPrev').addEventListener('click', ()=> shiftCalendarMonth(-1));
+  $('#calNext').addEventListener('click', ()=> shiftCalendarMonth(1));
+  $('#calToday').addEventListener('click', ()=>{
+    const now = new Date();
+    state.calendarMonth = now.getMonth();
+    state.calendarYear = now.getFullYear();
+    renderCalendarModule();
+  });
+  $all('.js-cal-open', content).forEach(el=>{
+    el.addEventListener('click', ()=> openEditor(el.dataset.id));
+  });
+
+  const unschedWrap = $('#calUnsched');
+  if(unscheduled.length === 0){
+    unschedWrap.innerHTML = `<div class="empty-state">Nothing unscheduled — every idea and draft already has a date, or there are no posts yet.</div>`;
+  } else {
+    unschedWrap.innerHTML = unscheduled.map(p=>{
+      const company = companyById(p.company_id) || {};
+      const thumb = firstThumbOf(p);
+      const thumbHtml = thumb
+        ? (thumb.video ? `<video src="${thumb.url}" muted></video>` : `<img src="${thumb.url}">`)
+        : `<div class="no-media-ph" style="height:100%;">🖼</div>`;
+      const platformLabel = PLATFORM_META[p.platform] ? PLATFORM_META[p.platform].label : p.platform;
+      return `
+        <div class="content-card cal-unsched-card js-cal-open" data-id="${p.id}">
+          <div class="thumb-wrap thumb-16x9" style="position:relative;">
+            ${thumbHtml}
+            <span class="cal-chip-dot" style="position:absolute;top:6px;left:6px;width:9px;height:9px;background:${company.color||'#666'};"></span>
+          </div>
+          <div class="cc-body">
+            <div class="cc-title">${escapeHtml((p.caption||'(no caption yet)').slice(0,80))}</div>
+            <div class="cc-date">${escapeHtml(company.name||'')} · ${escapeHtml(platformLabel)}</div>
+            <span class="mini-status status-${p.status}">${STATUS_LABEL[p.status]}</span>
+          </div>
+        </div>`;
+    }).join('');
+    $all('.js-cal-open', unschedWrap).forEach(el=>{
+      el.addEventListener('click', ()=> openEditor(el.dataset.id));
+    });
+  }
 }
 
 /* ============ PREVISUALIZE TAB ============ */
@@ -1247,7 +1436,10 @@ function renderVertCard(post, company, label){
 /* ============ EDITOR MODAL ============ */
 function openEditor(id){
   const post = id ? state.posts.find(p=>p.id===id) : null;
-  const company = companyById(state.company);
+  // Resolve against the post's own company (not necessarily the currently-selected
+  // company tab) — needed so opening a post from the cross-company Calendar view
+  // shows the right name/handle/platform list instead of whatever tab was last active.
+  const company = companyById(post ? post.company_id : state.company);
   const isNew = !post;
   const draft = post ? Object.assign({}, post) : {
     company_id: state.company,
