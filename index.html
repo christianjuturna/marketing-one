@@ -1533,6 +1533,17 @@ function openEditor(id){
   // shows the right name/handle/platform list instead of whatever tab was last active.
   const company = companyById(post ? post.company_id : state.company);
   const isNew = !post;
+  // Opening an existing post also switches the app's company/platform context to match
+  // it. Without this, editing a post from the cross-company Calendar view (which has no
+  // company tabs of its own) leaves state.company/platform pointed at whatever was last
+  // selected — so the edit saves correctly, but Content Command Center still shows a
+  // different company or platform tab afterward and the change looks like it "didn't
+  // update" when it actually just isn't the tab being displayed.
+  if(post){
+    state.company = post.company_id;
+    state.platform = post.platform;
+    renderCompanyTabs();
+  }
   const draft = post ? Object.assign({}, post) : {
     company_id: state.company,
     platform: state.platform,
