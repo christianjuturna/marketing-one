@@ -93,6 +93,10 @@
   .content-card .thumb-wrap.thumb-1x1{aspect-ratio:1/1;}
   .content-card .thumb-wrap img{width:100%;height:100%;object-fit:cover;display:block;}
   .content-card.top .thumb-wrap::after{content:'🏆 Top';position:absolute;top:6px;left:6px;background:rgba(0,0,0,0.72);color:#fff;font-size:10.5px;font-weight:700;padding:3px 7px;border-radius:6px;}
+  .thumb-edit-btn, .thumb-clear-btn{position:absolute;bottom:6px;width:26px;height:26px;border-radius:50%;background:rgba(0,0,0,0.65);color:#fff;display:flex;align-items:center;justify-content:center;font-size:12.5px;border:1px solid rgba(255,255,255,0.25);z-index:5;}
+  .thumb-edit-btn{right:6px;}
+  .thumb-clear-btn{right:38px;}
+  .thumb-edit-btn:hover, .thumb-clear-btn:hover{background:rgba(0,0,0,0.85);}
   .content-card .cc-body{padding:10px;display:flex;flex-direction:column;gap:6px;flex:1;}
   .content-card .cc-title{font-size:12.5px;font-weight:600;line-height:1.35;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;color:var(--text);}
   .content-card .cc-date{font-size:11px;color:var(--text-dim);}
@@ -2270,8 +2274,22 @@ function contentSectionHtml({ title, refreshId, unconfigured, configNote, cache,
   `;
 }
 
+// Manual thumbnail overrides for live content cards (keyed by platform + the platform's own
+// content id, so they survive refreshes). Stored in the same shared `settings` key/value store
+// used elsewhere in the app.
+function contentThumbKey(platform, itemId){
+  return 'content_thumb__' + platform + '__' + itemId;
+}
+
+function thumbEditControlsHtml(overrideKey, hasOverride){
+  return `
+    <button type="button" class="thumb-edit-btn" data-override-key="${overrideKey}" title="Upload a custom thumbnail">📷</button>
+    ${hasOverride ? `<button type="button" class="thumb-clear-btn" data-override-key="${overrideKey}" title="Remove custom thumbnail — revert to the live one">↺</button>` : ''}
+  `;
+}
+
 function renderContentPerformance(company, hasYt, hasIg, igConfigured){
-  let out = '';
+  let out = '<input type="file" id="thumbOverrideInput" accept="image/*" style="display:none">';
 
   if(hasYt){
     const cache = state.ytCache[company.id];
@@ -2283,9 +2301,16 @@ function renderContentPerformance(company, hasYt, hasIg, igConfigured){
       unconfigured,
       configNote: 'Connect a YouTube channel in Settings to see video-level performance here.',
       cache, items,
-      renderCard: (v, isTop) => `
+      renderCard: (v, isTop) => {
+        const overrideKey = contentThumbKey('youtube', v.id);
+        const override = state.settings[overrideKey];
+        const thumbSrc = override || v.thumb;
+        return `
         <div class="content-card ${isTop && v.views!=null ?'top':''}">
-          <div class="thumb-wrap thumb-16x9"><a href="${v.url}" target="_blank" rel="noopener"><img src="${v.thumb}" loading="lazy"></a></div>
+          <div class="thumb-wrap thumb-16x9">
+            <a href="${v.url}" target="_blank" rel="noopener"><img src="${thumbSrc}" loading="lazy"></a>
+            ${thumbEditControlsHtml(overrideKey, !!override)}
+          </div>
           <div class="cc-body">
             <div class="cc-title" title="${escapeHtml(v.title)}">${escapeHtml(v.title)}</div>
             <div class="cc-date">${v.publishedAt ? new Date(v.publishedAt).toLocaleDateString() : ''}</div>
@@ -2295,7 +2320,8 @@ function renderContentPerformance(company, hasYt, hasIg, igConfigured){
               <span>💬 <b>${fmtNum(v.comments)}</b></span>
             </div>
           </div>
-        </div>`,
+        </div>`;
+      },
     });
   }
 
@@ -2309,9 +2335,16 @@ function renderContentPerformance(company, hasYt, hasIg, igConfigured){
       unconfigured,
       configNote: 'Connect an Instagram access token + Business Account ID in Settings to see post-level performance here.',
       cache, items,
-      renderCard: (m, isTop) => `
+      renderCard: (m, isTop) => {
+        const overrideKey = contentThumbKey('instagram', m.id);
+        const override = state.settings[overrideKey];
+        const thumbSrc = override || m.thumb;
+        return `
         <div class="content-card ${isTop && m.likes!=null ?'top':''}">
-          <div class="thumb-wrap thumb-1x1"><a href="${m.permalink}" target="_blank" rel="noopener"><img src="${m.thumb}" loading="lazy"></a></div>
+          <div class="thumb-wrap thumb-1x1">
+            <a href="${m.permalink}" target="_blank" rel="noopener"><img src="${thumbSrc}" loading="lazy"></a>
+            ${thumbEditControlsHtml(overrideKey, !!override)}
+          </div>
           <div class="cc-body">
             <div class="cc-title" title="${escapeHtml(m.caption)}">${escapeHtml((m.caption||'(no caption)').slice(0,80))}</div>
             <div class="cc-date">${m.timestamp ? new Date(m.timestamp).toLocaleDateString() : ''}</div>
@@ -2320,7 +2353,8 @@ function renderContentPerformance(company, hasYt, hasIg, igConfigured){
               <span>💬 <b>${fmtNum(m.comments)}</b></span>
             </div>
           </div>
-        </div>`,
+        </div>`;
+      },
     });
   }
 
@@ -2516,6 +2550,44 @@ function paintReportsModule(){
     refreshIgContentBtn.disabled = true; refreshIgContentBtn.textContent = 'Refreshing…';
     await loadInstagramForCompany(company.id);
     paintReportsModule();
+  });
+
+  // Custom thumbnail overrides for the live content cards (click the camera icon on any
+  // YouTube video / Instagram post thumbnail to upload a replacement image).
+  let pendingThumbOverrideKey = null;
+  const thumbOverrideInput = $('#thumbOverrideInput', content);
+  $all('.thumb-edit-btn', content).forEach(btn=>{
+    btn.addEventListener('click', (e)=>{
+      e.preventDefault(); e.stopPropagation();
+      pendingThumbOverrideKey = btn.dataset.overrideKey;
+      if(thumbOverrideInput) thumbOverrideInput.click();
+    });
+  });
+  $all('.thumb-clear-btn', content).forEach(btn=>{
+    btn.addEventListener('click', async (e)=>{
+      e.preventDefault(); e.stopPropagation();
+      const key = btn.dataset.overrideKey;
+      try{
+        await saveSetting(key, '');
+        state.settings[key] = '';
+        showToast('Custom thumbnail removed');
+        paintReportsModule();
+      }catch(err){ console.error(err); showToast('Failed to remove custom thumbnail'); }
+    });
+  });
+  if(thumbOverrideInput) thumbOverrideInput.addEventListener('change', async (e)=>{
+    const file = e.target.files[0];
+    thumbOverrideInput.value = '';
+    if(!file || !pendingThumbOverrideKey) return;
+    const key = pendingThumbOverrideKey;
+    try{
+      showToast('Uploading thumbnail…');
+      const { publicUrl } = await uploadToStorage(file, 'content-thumbnails');
+      await saveSetting(key, publicUrl);
+      state.settings[key] = publicUrl;
+      showToast('Custom thumbnail saved');
+      paintReportsModule();
+    }catch(err){ console.error(err); showToast('Failed to upload thumbnail'); }
   });
 
   $('#addIgMetricBtn').addEventListener('click', ()=> openMetricEntryModal(company.id, 'instagram'));
