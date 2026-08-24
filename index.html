@@ -1380,6 +1380,14 @@ function renderCardWrap(post, company){
 function renderMediaSlides(post){
   const items = mediaItemsOf(post);
   if(items.length === 0){
+    // No media uploaded yet — but a manual "Thumbnail" was set on the post (e.g. a
+    // placeholder cover for a video that isn't shot yet), so show that instead of the
+    // empty "Add media" state. Mirrors the fallback the YouTube card already had.
+    if(post.thumbnail_url){
+      const isVid = /\.(mp4|mov|webm)$/i.test(post.thumbnail_url);
+      const inner = isVid ? `<video src="${post.thumbnail_url}" muted></video>` : `<img src="${post.thumbnail_url}" alt="">`;
+      return `<div class="media-slide active">${inner}</div>`;
+    }
     return `<div class="no-media-ph"><span class="plus">+</span>Add media</div>`;
   }
   const activeIdx = Math.min(state.carouselIndex[post.id] || 0, items.length - 1);
