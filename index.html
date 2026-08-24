@@ -53,14 +53,19 @@
   .company-tab.active[data-company="b_story"]{box-shadow: inset 0 3px 0 var(--bs);}
   .company-tab.active[data-company="back_to_one"]{box-shadow: inset 0 3px 0 var(--bt1);}
 
-  .main-tabs{display:flex;gap:22px;border-bottom:1px solid var(--border);}
+  .main-tabs{display:flex;gap:22px;border-bottom:1px solid var(--border);margin-bottom:18px;}
   .main-tab{padding:10px 2px 12px 2px;font-size:14px;font-weight:600;color:var(--text-dim);border-bottom:2px solid transparent;background:none;border-top:none;border-left:none;border-right:none;}
   .main-tab.active{color:var(--text);border-bottom-color:var(--accent);}
 
-  /* ---------- Marketing One module switcher ---------- */
-  .module-tabs{display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap;}
-  .module-tab{padding:8px 15px;border-radius:10px;border:1px solid var(--border);background:var(--panel);color:var(--text-dim);font-weight:700;font-size:13px;display:flex;align-items:center;gap:7px;}
+  /* ---------- App shell (sidebar + main area) ---------- */
+  .app-shell{display:flex;align-items:flex-start;max-width:1400px;margin:0 auto;}
+
+  /* ---------- Marketing One module switcher (now a vertical sidebar) ---------- */
+  .sidebar{display:flex;flex-direction:column;gap:5px;flex-shrink:0;width:220px;padding:20px 12px 40px 20px;position:sticky;top:var(--header-h, 90px);}
+  .module-tab{padding:10px 14px;border-radius:10px;border:1px solid transparent;background:none;color:var(--text-dim);font-weight:700;font-size:13.5px;display:flex;align-items:center;gap:9px;width:100%;text-align:left;}
+  .module-tab:hover{background:var(--panel);}
   .module-tab.active{background:var(--accent);color:#fff;border-color:var(--accent);}
+  .main-area{flex:1;min-width:0;}
 
   /* ---------- Calendar module ---------- */
   .cal-toolbar{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:16px;}
@@ -92,8 +97,11 @@
   .cal-more{font-size:10.5px;color:var(--text-dim);padding:2px 4px;}
   .mini-status{display:inline-block;padding:1px 6px;border-radius:5px;font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:0.03em;width:fit-content;}
   .cal-unsched-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:14px;}
-  .cal-unsched-card{cursor:pointer;transition:border-color .15s ease;}
+  .cal-unsched-card{cursor:grab;transition:border-color .15s ease;}
   .cal-unsched-card:hover{border-color:var(--accent);}
+  .cal-chip{cursor:grab;}
+  .cal-chip.dragging, .cal-unsched-card.dragging{opacity:0.4;}
+  .cal-cell.drag-over{outline:2px dashed var(--accent);outline-offset:-4px;background:rgba(99,102,241,0.12);}
 
   /* ---------- Reports module ---------- */
   .stat-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:20px;}
@@ -174,7 +182,7 @@
   .cs-meta{display:flex;justify-content:space-between;align-items:center;font-size:11px;color:var(--text-dim);}
   .cs-status{padding:2px 8px;border-radius:20px;background:var(--panel-2);font-weight:700;}
 
-  .content{max-width:1180px;margin:0 auto;padding:22px 20px 80px 20px;}
+  .content{max-width:1180px;margin:0;padding:22px 24px 80px 24px;}
 
   /* ---------- Platform sub-tabs ---------- */
   .toolbar-row{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:18px;}
@@ -377,22 +385,26 @@
       <button class="btn ghost small" id="settingsBtn" title="Settings">⚙ Settings</button>
     </div>
   </div>
-  <div class="module-tabs" id="moduleTabs">
+  <div class="company-tabs" id="companyTabs"></div>
+</div>
+
+<div class="app-shell">
+  <nav class="sidebar" id="moduleTabs">
     <button class="module-tab active" data-module="calendar">📅 Calendar</button>
     <button class="module-tab" data-module="content">🗂 Content Command Center</button>
     <button class="module-tab" data-module="reports">📊 Reports</button>
     <button class="module-tab" data-module="crm">🤝 CRM</button>
     <button class="module-tab" data-module="callsheet">📰 Call Sheet</button>
-  </div>
-  <div class="company-tabs" id="companyTabs"></div>
-  <div class="main-tabs" id="mainTabs">
-    <button class="main-tab active" data-tab="previz">Previsualize</button>
-    <button class="main-tab" data-tab="live">Live Page Preview</button>
-    <button class="main-tab" data-tab="prep">Posting Prep</button>
+  </nav>
+  <div class="main-area">
+    <div class="main-tabs" id="mainTabs">
+      <button class="main-tab active" data-tab="previz">Previsualize</button>
+      <button class="main-tab" data-tab="live">Live Page Preview</button>
+      <button class="main-tab" data-tab="prep">Posting Prep</button>
+    </div>
+    <div class="content" id="content"></div>
   </div>
 </div>
-
-<div class="content" id="content"></div>
 
 <div class="toast" id="toast"></div>
 
@@ -892,9 +904,19 @@ function getMediaDimensions(file){
 }
 
 /* ============ INIT ============ */
+// The sidebar is sticky under the header; since the header's height is now fixed
+// (title row + company tabs only), we measure it once and keep it in sync on resize
+// so the sidebar sticks right below it instead of overlapping.
+function syncHeaderHeightVar(){
+  const header = document.querySelector('.app-header');
+  if(header) document.documentElement.style.setProperty('--header-h', header.offsetHeight + 'px');
+}
+
 async function init(){
   renderCompanyTabs();
   bindTopLevelEvents();
+  syncHeaderHeightVar();
+  window.addEventListener('resize', syncHeaderHeightVar);
   try{
     const [posts, settings, currentPosts] = await Promise.all([fetchPosts(), fetchSettings(), fetchCurrentPosts()]);
     state.posts = posts;
@@ -980,6 +1002,9 @@ function renderAll(){
 
 /* ============ CALENDAR MODULE ============ */
 const WEEKDAY_LABELS = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+// Suppresses the click-to-open handler right after a drag-and-drop reschedule, same
+// pattern used for the Previz feed's drag-to-reorder (see `justDragged` above).
+let justDraggedCal = false;
 
 function shiftCalendarMonth(delta){
   let m = state.calendarMonth + delta;
@@ -1009,7 +1034,7 @@ function calDayCellHtml(cell, postsByDate, todayStr){
       ? (thumb.video ? `<video src="${thumb.url}" muted></video>` : `<img src="${thumb.url}">`)
       : `<div class="cal-chip-noimg" style="background:${company.color||'#333'}">${escapeHtml(company.initials||'?')}</div>`;
     return `
-      <div class="cal-chip js-cal-open" data-id="${p.id}" title="${escapeHtml(p.caption||'(no caption yet)')}">
+      <div class="cal-chip js-cal-open" draggable="true" data-id="${p.id}" title="${escapeHtml(p.caption||'(no caption yet)')}">
         <div class="cal-chip-thumb">${thumbHtml}<span class="cal-chip-dot" style="background:${company.color||'#666'}"></span></div>
         <div class="cal-chip-text">
           <span class="mini-status status-${p.status}">${STATUS_LABEL[p.status]}</span>
@@ -1020,7 +1045,7 @@ function calDayCellHtml(cell, postsByDate, todayStr){
   const moreHtml = overflow > 0 ? `<div class="cal-more">+${overflow} more</div>` : '';
 
   return `
-    <div class="cal-cell ${isToday?'today':''}">
+    <div class="cal-cell ${isToday?'today':''}" data-date="${cell.dateStr}">
       <div class="cal-daynum">${cell.dayNum}</div>
       <div class="cal-chips">${chips}${moreHtml}</div>
     </div>`;
@@ -1095,7 +1120,7 @@ function renderCalendarModule(){
     renderCalendarModule();
   });
   $all('.js-cal-open', content).forEach(el=>{
-    el.addEventListener('click', ()=> openEditor(el.dataset.id));
+    el.addEventListener('click', ()=>{ if(justDraggedCal) return; openEditor(el.dataset.id); });
   });
 
   const unschedWrap = $('#calUnsched');
@@ -1110,7 +1135,7 @@ function renderCalendarModule(){
         : `<div class="no-media-ph" style="height:100%;">🖼</div>`;
       const platformLabel = PLATFORM_META[p.platform] ? PLATFORM_META[p.platform].label : p.platform;
       return `
-        <div class="content-card cal-unsched-card js-cal-open" data-id="${p.id}">
+        <div class="content-card cal-unsched-card js-cal-open" draggable="true" data-id="${p.id}">
           <div class="thumb-wrap thumb-16x9" style="position:relative;">
             ${thumbHtml}
             <span class="cal-chip-dot" style="position:absolute;top:6px;left:6px;width:9px;height:9px;background:${company.color||'#666'};"></span>
@@ -1123,9 +1148,58 @@ function renderCalendarModule(){
         </div>`;
     }).join('');
     $all('.js-cal-open', unschedWrap).forEach(el=>{
-      el.addEventListener('click', ()=> openEditor(el.dataset.id));
+      el.addEventListener('click', ()=>{ if(justDraggedCal) return; openEditor(el.dataset.id); });
     });
   }
+
+  bindCalendarDragDrop(content);
+}
+
+// Lets you drag an unscheduled idea/draft card (or an already-scheduled chip) straight
+// onto a day cell to set/move its scheduled_date — no need to open the editor just to
+// pick a date.
+function bindCalendarDragDrop(root){
+  $all('.cal-chip, .cal-unsched-card', root).forEach(el=>{
+    el.addEventListener('dragstart', (e)=>{
+      el.classList.add('dragging');
+      e.dataTransfer.effectAllowed = 'move';
+      try{ e.dataTransfer.setData('text/plain', el.dataset.id); }catch(err){}
+    });
+    el.addEventListener('dragend', ()=>{
+      el.classList.remove('dragging');
+      justDraggedCal = true;
+      setTimeout(()=>{ justDraggedCal = false; }, 50);
+    });
+  });
+  $all('.cal-cell', root).forEach(cell=>{
+    if(!cell.dataset.date) return; // out-of-month cells aren't valid drop targets
+    cell.addEventListener('dragover', (e)=>{
+      e.preventDefault();
+      cell.classList.add('drag-over');
+    });
+    cell.addEventListener('dragleave', ()=>{
+      cell.classList.remove('drag-over');
+    });
+    cell.addEventListener('drop', async (e)=>{
+      e.preventDefault();
+      cell.classList.remove('drag-over');
+      const id = e.dataTransfer.getData('text/plain');
+      if(!id) return;
+      const post = state.posts.find(p=>p.id===id);
+      if(!post) return;
+      const newDate = cell.dataset.date;
+      if(post.scheduled_date === newDate) return;
+      try{
+        const updated = await updatePost(id, { scheduled_date: newDate });
+        Object.assign(post, updated);
+        showToast('Moved to ' + fmtDate(newDate));
+        renderCalendarModule();
+      }catch(err){
+        console.error(err);
+        showToast('Failed to reschedule — try again.');
+      }
+    });
+  });
 }
 
 /* ============ PREVISUALIZE TAB ============ */
