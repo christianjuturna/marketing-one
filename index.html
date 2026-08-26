@@ -71,9 +71,10 @@
   .cal-toolbar{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:16px;}
   .cal-nav{display:flex;align-items:center;gap:10px;}
   .cal-month-label{font-size:16px;font-weight:800;min-width:170px;text-align:center;}
-  .cal-legend{display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:var(--text-dim);}
-  .cal-legend-item{display:flex;align-items:center;gap:6px;}
-  .cal-legend-item .sw{width:8px;height:8px;border-radius:50%;}
+  .cal-company-filter{display:flex;gap:6px;flex-wrap:wrap;}
+  .cal-cf-btn{display:flex;align-items:center;gap:6px;padding:6px 12px;border-radius:20px;border:1px solid var(--border);background:var(--panel);color:var(--text-dim);font-size:12.5px;font-weight:600;}
+  .cal-cf-btn .sw{width:7px;height:7px;border-radius:50%;flex-shrink:0;}
+  .cal-cf-btn.active{background:var(--panel-2);color:var(--text);border-color:#3a4053;}
   .cal-grid{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;}
   .cal-weekdays{display:grid;grid-template-columns:repeat(7,1fr);border-bottom:1px solid var(--border);}
   .cal-weekday{padding:8px;text-align:center;font-size:11px;font-weight:700;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.03em;}
@@ -167,6 +168,11 @@
   .lead-card .lco{font-size:11.5px;color:var(--text-dim);margin-bottom:6px;}
   .lead-card .lmeta{font-size:11px;color:var(--text-dim);display:flex;justify-content:space-between;}
   .lead-card .lval{color:#22c55e;font-weight:700;}
+  .lead-card .lcontact{display:flex;align-items:center;gap:6px;font-size:10.5px;color:var(--text-dim);margin-top:8px;padding-top:8px;border-top:1px solid var(--border);}
+  .lead-card .lcontact .dot{width:6px;height:6px;border-radius:50%;background:#6b7280;flex-shrink:0;}
+  .lead-card .lcontact.ok .dot{background:#22c55e;}
+  .lead-card .lcontact.warn .dot{background:#f59e0b;}
+  .lead-card .lcontact.stale .dot{background:#ef4444;}
 
   /* ---------- Lead activity / conversation log ---------- */
   .activity-log{max-height:220px;overflow-y:auto;margin-bottom:10px;}
@@ -468,6 +474,7 @@ let state = {
   mainTab: 'previz',
   calendarMonth: new Date().getMonth(),
   calendarYear: new Date().getFullYear(),
+  calendarCompanyFilter: 'all', // 'all' | a company id — which company(s) the Calendar shows
   platform: null,
   statusFilter: 'all',
   posts: [],
@@ -1107,11 +1114,16 @@ function renderCalendarModule(){
   const monthLabel = new Date(y, m, 1).toLocaleDateString(undefined, { month:'long', year:'numeric' });
   const todayStr = new Date().toISOString().slice(0,10);
 
-  // Group every post (across all companies) by its scheduled date; anything without
-  // a date goes in the "unscheduled" tray instead of being dropped silently.
+  // Respect the company filter — "all" shows every brand combined (the default),
+  // or narrow to just one company's posts when a specific one is picked.
+  const filterCompany = state.calendarCompanyFilter;
+  const relevantPosts = filterCompany === 'all' ? state.posts : state.posts.filter(p => p.company_id === filterCompany);
+
+  // Group every relevant post by its scheduled date; anything without a date goes in
+  // the "unscheduled" tray instead of being dropped silently.
   const postsByDate = {};
   const unscheduled = [];
-  state.posts.forEach(p=>{
+  relevantPosts.forEach(p=>{
     if(p.scheduled_date){
       (postsByDate[p.scheduled_date] = postsByDate[p.scheduled_date] || []).push(p);
     } else {
@@ -1147,8 +1159,12 @@ function renderCalendarModule(){
             <button class="btn ghost small" id="calNext">›</button>
             <button class="btn ghost small" id="calToday">Today</button>
           </div>
-          <div class="cal-legend">
-            ${COMPANIES.map(c=>`<span class="cal-legend-item"><span class="sw" style="background:${c.color}"></span>${c.name}</span>`).join('')}
+          <div class="cal-company-filter" id="calCompanyFilter">
+            <button class="cal-cf-btn ${filterCompany==='all'?'active':''}" data-company="all">All companies</button>
+            ${COMPANIES.map(c=>`
+              <button class="cal-cf-btn ${filterCompany===c.id?'active':''}" data-company="${c.id}">
+                <span class="sw" style="background:${c.color}"></span>${c.name}
+              </button>`).join('')}
           </div>
         </div>
         <div class="cal-grid">
@@ -1165,6 +1181,12 @@ function renderCalendarModule(){
 
   $('#calPrev').addEventListener('click', ()=> shiftCalendarMonth(-1));
   $('#calNext').addEventListener('click', ()=> shiftCalendarMonth(1));
+  $all('.cal-cf-btn', content).forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      state.calendarCompanyFilter = btn.dataset.company;
+      renderCalendarModule();
+    });
+  });
   $('#calToday').addEventListener('click', ()=>{
     const now = new Date();
     state.calendarMonth = now.getMonth();
@@ -3034,6 +3056,22 @@ async function ensureLeadsLoaded(){
   state.leadsLoaded = true;
 }
 
+// "Last contacted" isn't its own column on the leads table — stored in the existing
+// settings key/value table (same pattern as content-thumbnail overrides) so it doesn't
+// need a schema change: key 'lead_last_contacted__<leadId>' -> a 'YYYY-MM-DD' string.
+function leadContactKey(leadId){ return 'lead_last_contacted__' + leadId; }
+function lastContactedFor(leadId){ return state.settings[leadContactKey(leadId)] || ''; }
+function lastContactedLabel(dateStr){ return dateStr ? ('Contacted ' + fmtDate(dateStr)) : 'Not contacted yet'; }
+// Buckets recency into a quick-glance color cue on the kanban card: ok (<=7d),
+// warn (8-21d), stale (>21d), or none (never logged a contact date).
+function contactRecencyClass(dateStr){
+  if(!dateStr) return 'none';
+  const days = Math.floor((Date.now() - new Date(dateStr + 'T00:00:00').getTime()) / 86400000);
+  if(days <= 7) return 'ok';
+  if(days <= 21) return 'warn';
+  return 'stale';
+}
+
 function renderCrmModule(){
   const content = $('#content');
   content.innerHTML = `<div class="report-panel"><div class="sub">Loading leads…</div></div>`;
@@ -3064,6 +3102,7 @@ function paintCrmModule(){
                 <div class="lname">${escapeHtml(l.name)}</div>
                 <div class="lco">${escapeHtml(l.company_name||'')}</div>
                 <div class="lmeta"><span>${escapeHtml(l.source||'LinkedIn')}</span>${l.value ? `<span class="lval">$${fmtNum(l.value)}</span>` : ''}</div>
+                <div class="lcontact ${contactRecencyClass(lastContactedFor(l.id))}"><span class="dot"></span>${lastContactedLabel(lastContactedFor(l.id))}</div>
               </div>
             `).join('')}
           </div>
@@ -3116,6 +3155,15 @@ function openLeadModal(id){
       <div class="field"><label>Stage</label>
         <select id="l_stage">${LEAD_STAGES.map(s=>`<option value="${s}" ${lead && lead.stage===s ? 'selected':''}>${LEAD_STAGE_LABEL[s]}</option>`).join('')}</select>
       </div>
+      ${lead ? `
+        <div class="field">
+          <label>Last contacted</label>
+          <div style="display:flex;gap:8px;">
+            <input type="date" id="l_lastcontact" value="${escapeHtml(lastContactedFor(lead.id))}" style="flex:1;">
+            <button type="button" class="btn ghost small" id="l_markTodayBtn">Mark as today</button>
+          </div>
+        </div>
+      ` : ''}
       <div class="field"><label>Deal value ($, optional)</label><input type="text" id="l_value" value="${lead && lead.value != null ? lead.value : ''}"></div>
       <div class="field"><label>Notes</label><textarea id="l_notes">${escapeHtml(lead ? lead.notes||'' : '')}</textarea></div>
       ${lead ? `
@@ -3161,8 +3209,20 @@ function openLeadModal(id){
         $('#act_content', overlay).value = '';
         renderActivityLog(overlay, lead.id);
         showToast('Logged');
+        // Logging a conversation counts as contact — auto-bump last contacted to today.
+        const today = new Date().toISOString().slice(0,10);
+        try{
+          await saveSetting(leadContactKey(lead.id), today);
+          state.settings[leadContactKey(lead.id)] = today;
+          const lcInput = $('#l_lastcontact', overlay);
+          if(lcInput) lcInput.value = today;
+        }catch(err){ console.error('Failed to auto-update last contacted', err); }
       }catch(err){ console.error(err); showToast('Failed to log'); }
       finally{ btn.disabled = false; }
+    });
+    const markTodayBtn = $('#l_markTodayBtn', overlay);
+    if(markTodayBtn) markTodayBtn.addEventListener('click', ()=>{
+      $('#l_lastcontact', overlay).value = new Date().toISOString().slice(0,10);
     });
   }
 
@@ -3194,6 +3254,14 @@ function openLeadModal(id){
         const updated = await updateLead(lead.id, payload);
         const idx = state.leads.findIndex(l=>l.id===lead.id);
         state.leads[idx] = updated;
+        const lcInput = $('#l_lastcontact', overlay);
+        if(lcInput){
+          const newLastContact = lcInput.value || '';
+          if(newLastContact !== lastContactedFor(lead.id)){
+            await saveSetting(leadContactKey(lead.id), newLastContact);
+            state.settings[leadContactKey(lead.id)] = newLastContact;
+          }
+        }
       } else {
         payload.company_id = 'origin_point';
         const created = await createLead(payload);
