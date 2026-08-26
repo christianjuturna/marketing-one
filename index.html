@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Marketing One</title>
+<script src="https://accounts.google.com/gsi/client" async defer></script>
 <style>
   :root{
     --bg:#0f1115;
@@ -128,6 +129,13 @@
   .report-panel h3{margin:0 0 4px 0;font-size:15px;}
   .report-panel .sub{color:var(--text-dim);font-size:12px;margin-bottom:14px;}
   .chart-wrap{background:var(--panel-2);border-radius:10px;padding:10px;margin-top:10px;}
+  .yt-top-table{display:flex;flex-direction:column;gap:8px;margin-top:8px;}
+  .yt-top-row{display:flex;gap:10px;align-items:center;background:var(--panel-2);border:1px solid var(--border);border-radius:10px;padding:8px;text-decoration:none;color:inherit;}
+  .yt-top-thumb{width:88px;height:50px;object-fit:cover;border-radius:6px;flex-shrink:0;background:#000;}
+  .yt-top-thumb-ph{background:var(--border);}
+  .yt-top-info{min-width:0;flex:1;}
+  .yt-top-title{font-size:12.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .yt-top-stats{display:flex;gap:12px;font-size:11px;color:var(--text-dim);margin-top:4px;}
   .metric-log-row{display:flex;align-items:center;justify-content:space-between;padding:8px 4px;border-bottom:1px solid var(--border);font-size:12.5px;color:var(--text-dim);}
   .metric-log-row:last-child{border-bottom:none;}
   .range-tabs{display:flex;gap:4px;background:var(--panel-2);border-radius:9px;padding:3px;}
@@ -489,6 +497,8 @@ let state = {
   metrics: {},        // company_id -> [] of metric rows
   metricsLoaded: {},  // company_id -> bool
   reportsRange: '30', // '7' | '30' | '90' | 'all'
+  ytAnalyticsToken: {}, // company_id -> { token, expiresAt } — in-memory only, requires reconnect each browser session
+  ytAnalyticsData: {},  // company_id -> { status, traffic, trend, topVideos }
   leads: [],
   leadsLoaded: false,
   leadActivities: {}, // lead_id -> [] of activity rows
@@ -843,10 +853,154 @@ async function loadInstagramForCompany(companyId){
   state.igMediaCache[companyId] = { status:'loading' };
   try{
     const media = await fetchInstagramMedia(igUserId, accessToken);
+    // Enrich each item with discovery-relevant numbers (views/reach) in parallel. Some
+    // media types (e.g. album/carousel) don't support these insights — fail quietly per item.
+    await Promise.all(media.map(async (m)=>{
+      try{
+        const stats = await fetchInstagramMediaInsights(m.id, accessToken);
+        m.views = stats.views;
+        m.reach = stats.reach;
+      }catch(err){ /* not all media types support insights — leave views/reach null */ }
+    }));
     state.igMediaCache[companyId] = { status:'ok', media, loadedAt: Date.now() };
   }catch(err){
     console.error(err);
     state.igMediaCache[companyId] = { status:'error', error: err.message };
+  }
+}
+
+// Media-level insights (views, reach) — the discovery-relevant numbers: reach is how many
+// unique accounts saw the post (a proxy for "discovered"), views counts every appearance.
+async function fetchInstagramMediaInsights(mediaId, accessToken){
+  const res = await fetch(`https://graph.instagram.com/v21.0/${encodeURIComponent(mediaId)}/insights?metric=views,reach&access_token=${encodeURIComponent(accessToken)}`);
+  const json = await res.json();
+  if(!res.ok) throw new Error(json.error && json.error.message || 'Instagram media insights failed');
+  const byName = {};
+  (json.data || []).forEach(d => {
+    const val = d.values && d.values[0] ? d.values[0].value : (d.total_value ? d.total_value.value : null);
+    byName[d.name] = val;
+  });
+  return { views: byName.views != null ? Number(byName.views) : null, reach: byName.reach != null ? Number(byName.reach) : null };
+}
+
+/* ---- YouTube Analytics (OAuth) — discovery source, retention, thumbnail CTR ----
+   The plain YouTube Data API key above only exposes public counts (views/likes/comments).
+   Traffic-source breakdown, average view duration/retention %, and thumbnail impressions/CTR
+   live in the YouTube Analytics API, which requires the channel owner/manager to sign in and
+   grant read-only access — an API key alone cannot see this data. This app has no backend, so
+   the sign-in uses Google's client-side token flow (Google Identity Services): no client
+   secret is stored anywhere, but the resulting access token only lasts about an hour and lives
+   in memory only — reconnect after that (same pattern as the existing "Pull live stats" buttons). */
+const YT_TRAFFIC_SOURCE_LABELS = {
+  ADVERTISING:'Advertising', ANNOTATION:'Annotations', CAMPAIGN_CARD:'Campaign cards',
+  END_SCREEN:'End screens', EXT_URL:'External sites & apps', NOTIFICATION:'Notifications',
+  PLAYLIST:'Playlists', PROMOTED:'Promoted content', RELATED_VIDEO:'Suggested videos',
+  SUBSCRIBER:'Subscription feed', YT_CHANNEL:'Channel page', YT_OTHER_PAGE:'Other YouTube pages',
+  YT_SEARCH:'YouTube search', NO_LINK_EMBEDDED:'Embedded player', NO_LINK_OTHER:'Direct / unknown',
+  SHORTS:'Shorts feed', HASHTAGS:'Hashtags', SOUND_PAGE:'Sound page', LIVE:'Live',
+};
+function ytTrafficLabel(code){
+  return YT_TRAFFIC_SOURCE_LABELS[code] || String(code).replace(/_/g,' ').toLowerCase().replace(/\b\w/g, c=>c.toUpperCase());
+}
+function fmtDuration(sec){
+  if(sec == null || isNaN(sec)) return '—';
+  sec = Math.round(sec);
+  const m = Math.floor(sec/60), s = sec%60;
+  return m > 0 ? `${m}m ${s}s` : `${s}s`;
+}
+
+function ensureGoogleIdentityLoaded(){
+  return new Promise((resolve, reject)=>{
+    if(window.google && window.google.accounts && window.google.accounts.oauth2){ resolve(); return; }
+    let tries = 0;
+    const check = ()=>{
+      if(window.google && window.google.accounts && window.google.accounts.oauth2){ resolve(); return; }
+      tries++;
+      if(tries > 100){ reject(new Error('Google sign-in script failed to load — check your connection and try again')); return; }
+      setTimeout(check, 100);
+    };
+    check();
+  });
+}
+
+function ytAnalyticsTokenValid(companyId){
+  const t = state.ytAnalyticsToken[companyId];
+  return !!(t && t.expiresAt > Date.now() + 5000);
+}
+
+async function connectYoutubeAnalytics(companyId){
+  const clientId = state.settings.google_oauth_client_id;
+  if(!clientId) throw new Error('Add a Google OAuth Client ID in Settings first');
+  await ensureGoogleIdentityLoaded();
+  return new Promise((resolve, reject)=>{
+    try{
+      const tokenClient = google.accounts.oauth2.initTokenClient({
+        client_id: clientId,
+        scope: 'https://www.googleapis.com/auth/yt-analytics.readonly',
+        callback: (resp)=>{
+          if(resp.error){ reject(new Error(resp.error_description || resp.error)); return; }
+          const token = { token: resp.access_token, expiresAt: Date.now() + (Number(resp.expires_in || 3300) * 1000) };
+          state.ytAnalyticsToken[companyId] = token;
+          resolve(token);
+        },
+        error_callback: (err)=>{ reject(new Error((err && err.message) || 'Google sign-in was cancelled or failed')); },
+      });
+      tokenClient.requestAccessToken({ prompt: '' });
+    }catch(err){ reject(err); }
+  });
+}
+
+async function ytAnalyticsQuery(channelId, accessToken, params){
+  const qs = new URLSearchParams(Object.assign({ ids: 'channel==' + channelId }, params)).toString();
+  const res = await fetch(`https://youtubeanalytics.googleapis.com/v2/reports?${qs}`, {
+    headers: { Authorization: 'Bearer ' + accessToken },
+  });
+  const json = await res.json();
+  if(!res.ok) throw new Error((json.error && json.error.message) || 'YouTube Analytics request failed');
+  return json;
+}
+
+function reportsRangeToDates(rangeKey){
+  const end = new Date();
+  const endStr = end.toISOString().slice(0,10);
+  let days = 30;
+  if(rangeKey === '7') days = 7;
+  else if(rangeKey === '90') days = 90;
+  else if(rangeKey === 'all') days = 365; // Analytics API needs a bounded range — cap "all" at 1 year
+  const start = new Date(end.getTime() - days*86400000);
+  return { startDate: start.toISOString().slice(0,10), endDate: endStr };
+}
+
+async function loadYoutubeAnalyticsForCompany(companyId, rangeKey){
+  const channelId = state.settings['youtube_channel__' + companyId];
+  if(!channelId){ state.ytAnalyticsData[companyId] = { status:'unconfigured' }; return; }
+  if(!ytAnalyticsTokenValid(companyId)){ state.ytAnalyticsData[companyId] = { status:'disconnected' }; return; }
+  const accessToken = state.ytAnalyticsToken[companyId].token;
+  const { startDate, endDate } = reportsRangeToDates(rangeKey);
+  state.ytAnalyticsData[companyId] = { status:'loading' };
+  try{
+    const [trafficJson, trendJson, videosJson] = await Promise.all([
+      ytAnalyticsQuery(channelId, accessToken, { startDate, endDate, metrics:'views', dimensions:'insightTrafficSourceType', sort:'-views' }),
+      ytAnalyticsQuery(channelId, accessToken, { startDate, endDate, metrics:'views,averageViewDuration,averageViewPercentage,videoThumbnailImpressions,videoThumbnailImpressionsClickRate', dimensions:'day', sort:'day' }),
+      ytAnalyticsQuery(channelId, accessToken, { startDate, endDate, metrics:'views,averageViewPercentage,videoThumbnailImpressionsClickRate,estimatedMinutesWatched', dimensions:'video', sort:'-views', maxResults:'10' }),
+    ]);
+    const traffic = (trafficJson.rows || []).map(r => ({ source: r[0], views: r[1] }));
+    const trend = (trendJson.rows || []).map(r => ({ date:r[0], views:r[1], avgDuration:r[2], avgPct:r[3], thumbImpr:r[4], thumbCtr:r[5] }));
+    const cache = state.ytCache[companyId];
+    const byId = {};
+    if(cache && cache.status === 'ok') cache.videos.forEach(v => { byId[v.id] = v; });
+    const topVideos = (videosJson.rows || []).map(r => {
+      const vid = r[0];
+      const known = byId[vid];
+      return {
+        id: vid, title: known ? known.title : vid, thumb: known ? known.thumb : null, url: known ? known.url : ('https://www.youtube.com/watch?v='+vid),
+        views: r[1], avgPct: r[2], thumbCtr: r[3], minutesWatched: r[4],
+      };
+    });
+    state.ytAnalyticsData[companyId] = { status:'ok', traffic, trend, topVideos, loadedAt: Date.now() };
+  }catch(err){
+    console.error(err);
+    state.ytAnalyticsData[companyId] = { status:'error', error: err.message };
   }
 }
 
@@ -926,6 +1080,41 @@ function drawLineChart(canvas, points, opts){
     const [x] = xy(i,p.v);
     ctx.fillText(p.label || '', x-14, h-6);
   });
+}
+
+function drawBarChart(canvas, bars, opts){
+  opts = opts || {};
+  const ctx = canvas.getContext('2d');
+  const w = canvas.width = canvas.clientWidth * 2;
+  const h = canvas.height = 160 * 2;
+  ctx.clearRect(0,0,w,h);
+  if(!bars || bars.length === 0){
+    ctx.fillStyle = '#9aa1b2';
+    ctx.font = '24px sans-serif';
+    ctx.fillText('No data yet', 20, h/2);
+    return;
+  }
+  const pad = 26;
+  const labelSpace = 60;
+  const max = Math.max(...bars.map(b=>b.v||0), 1);
+  const barW = (w - pad*2) / bars.length;
+  ctx.textAlign = 'center';
+  bars.forEach((b,i)=>{
+    const barH = ((b.v||0)/max) * (h - pad*2 - labelSpace);
+    const x = pad + i*barW + barW*0.15;
+    const y = h - pad - labelSpace - barH;
+    ctx.fillStyle = opts.color || '#6366f1';
+    ctx.fillRect(x, y, barW*0.7, Math.max(barH,1));
+    ctx.fillStyle = '#e5e7eb';
+    ctx.font = '20px sans-serif';
+    ctx.fillText(fmtNum(b.v), x + barW*0.35, y - 8 < 20 ? 20 : y - 8);
+    ctx.fillStyle = '#9aa1b2';
+    ctx.font = '17px sans-serif';
+    const label = (b.label||'');
+    const words = label.length > 13 ? label.slice(0,13)+'…' : label;
+    ctx.fillText(words, x + barW*0.35, h - labelSpace + 24);
+  });
+  ctx.textAlign = 'left';
 }
 
 // Reads the real pixel dimensions of a file locally (before/while it uploads) so cards
@@ -2438,6 +2627,15 @@ function openSettingsModal(){
         Get a free API key from Google Cloud Console (enable "YouTube Data API v3"), and find each Channel ID on the channel's "About" page → Share channel → Copy channel ID.
       </div>
 
+      <div class="section-heading">YouTube Analytics (discovery, retention &amp; CTR)</div>
+      <div class="field">
+        <label>Google OAuth Client ID</label>
+        <input type="text" id="s_ytoauth" placeholder="xxxxxxxxxx.apps.googleusercontent.com" value="${escapeHtml(state.settings.google_oauth_client_id||'')}">
+      </div>
+      <div style="font-size:11.5px;color:var(--text-dim);margin-bottom:14px;line-height:1.5;">
+        In the same Google Cloud project as your API key: enable "YouTube Analytics API", then Credentials → Create Credentials → OAuth client ID → Web application. Add <code>${location.origin}</code> as an authorized JavaScript origin and paste the Client ID here. Keep the OAuth consent screen in "Testing" and add each channel owner as a test user (up to 100) — no Google review needed. Then use "Connect YouTube Analytics" on the Reports page for each brand.
+      </div>
+
       <div class="section-heading">Instagram (live data)</div>
       ${igCompanies.map(c=>`
         <div class="field">
@@ -2451,6 +2649,19 @@ function openSettingsModal(){
       `).join('')}
       <div style="font-size:11.5px;color:var(--text-dim);margin-bottom:14px;line-height:1.5;">
         Generate a per-account access token in Meta for Developers (App → Instagram → API setup with Instagram login → Generate token). Each token is tied to one Instagram Business Account.
+      </div>
+
+      <div class="section-heading">TikTok &amp; Facebook (coming soon)</div>
+      <div class="field">
+        <label>TikTok Client Key / Access Token</label>
+        <input type="text" id="s_tiktok" placeholder="Paste once your TikTok developer app is approved" value="${escapeHtml(state.settings.tiktok_access_token||'')}">
+      </div>
+      <div class="field">
+        <label>Facebook Page Access Token</label>
+        <input type="text" id="s_facebook" placeholder="Paste once your Facebook app has Page access" value="${escapeHtml(state.settings.facebook_page_access_token||'')}">
+      </div>
+      <div style="font-size:11.5px;color:var(--text-dim);margin-bottom:14px;line-height:1.5;">
+        These are saved for when the integrations are wired up — see the "TikTok &amp; Facebook" panel on the Reports page for the developer-app steps needed first.
       </div>
 
       <div class="modal-actions">
@@ -2471,7 +2682,12 @@ function openSettingsModal(){
     $('#setSaveBtn', overlay).disabled = true;
     $('#setSaveBtn', overlay).textContent = 'Saving…';
     try{
-      const updates = [['youtube_api_key', $('#s_ytkey', overlay).value.trim()]];
+      const updates = [
+        ['youtube_api_key', $('#s_ytkey', overlay).value.trim()],
+        ['google_oauth_client_id', $('#s_ytoauth', overlay).value.trim()],
+        ['tiktok_access_token', $('#s_tiktok', overlay).value.trim()],
+        ['facebook_page_access_token', $('#s_facebook', overlay).value.trim()],
+      ];
       ytCompanies.forEach(c=>{
         updates.push(['youtube_channel__'+c.id, $('#s_ytch_'+c.id, overlay).value.trim()]);
       });
@@ -2484,6 +2700,7 @@ function openSettingsModal(){
         state.settings[key] = value;
       }
       state.ytCache = {};
+      state.ytAnalyticsData = {};
       overlay.remove();
       showToast('Settings saved');
       renderAll();
@@ -2685,6 +2902,84 @@ function thumbEditControlsHtml(overrideKey, hasOverride){
   `;
 }
 
+function renderYoutubeAnalyticsPanel(company){
+  const hasClientId = !!state.settings.google_oauth_client_id;
+  const connected = ytAnalyticsTokenValid(company.id);
+  const data = state.ytAnalyticsData[company.id];
+  let body;
+  if(!hasClientId){
+    body = `<div class="sub">Add a Google OAuth Client ID in <a href="#" id="ytoauthSettingsLink">Settings</a> to unlock discovery sources, watch time/retention, and thumbnail CTR below — requires the channel owner to sign in once.</div>`;
+  } else if(!connected){
+    body = `
+      <button class="btn small" id="connectYtAnalyticsBtn">Connect ${escapeHtml(company.name)}'s YouTube Analytics</button>
+      <div class="sub" style="margin-top:8px;">Sign in as the channel owner or a manager to unlock discovery sources, average view duration/retention, and thumbnail CTR. The connection lasts about an hour per session — reconnect any time it lapses.</div>
+    `;
+  } else if(!data || data.status === 'loading'){
+    body = `<div class="sub">Loading discovery &amp; retention data…</div>`;
+  } else if(data.status === 'error'){
+    body = `<div class="sub" style="color:#ef4444;">${escapeHtml(data.error)}</div><button class="btn ghost small" id="connectYtAnalyticsBtn" style="margin-top:8px;">Reconnect</button>`;
+  } else if(data.status === 'ok'){
+    const lastTrend = data.trend[data.trend.length - 1];
+    body = `
+      <div class="stat-grid">
+        <div class="stat-tile"><div class="label">Avg. view duration</div><div class="value">${lastTrend ? fmtDuration(lastTrend.avgDuration) : '—'}</div></div>
+        <div class="stat-tile"><div class="label">Avg. retention</div><div class="value">${lastTrend && lastTrend.avgPct!=null ? Math.round(lastTrend.avgPct)+'%' : '—'}</div></div>
+        <div class="stat-tile"><div class="label">Thumbnail CTR</div><div class="value">${lastTrend && lastTrend.thumbCtr!=null ? Number(lastTrend.thumbCtr).toFixed(1)+'%' : '—'}</div></div>
+        <div class="stat-tile"><div class="label">Thumbnail impressions</div><div class="value">${fmtNum(lastTrend ? lastTrend.thumbImpr : null)}</div></div>
+      </div>
+      <div class="section-heading" style="font-size:12.5px;margin:14px 0 6px;">How viewers discover your videos</div>
+      <div class="chart-wrap"><canvas id="ytTrafficChart" style="width:100%;height:160px;"></canvas></div>
+      <div class="section-heading" style="font-size:12.5px;margin:14px 0 6px;">Average retention over time</div>
+      <div class="chart-wrap"><canvas id="ytRetentionChart" style="width:100%;height:160px;"></canvas></div>
+      <div class="section-heading" style="font-size:12.5px;margin:14px 0 6px;">Thumbnail click-through rate over time</div>
+      <div class="chart-wrap"><canvas id="ytCtrChart" style="width:100%;height:160px;"></canvas></div>
+      <div class="section-heading" style="font-size:12.5px;margin:14px 0 6px;">Top videos this period — discovery, watch length &amp; CTR</div>
+      <div class="yt-top-table">
+        ${data.topVideos.length === 0 ? '<div class="sub">No video-level data for this period yet.</div>' : data.topVideos.map(v => `
+          <a class="yt-top-row" href="${v.url}" target="_blank" rel="noopener">
+            ${v.thumb ? `<img src="${v.thumb}" class="yt-top-thumb">` : '<div class="yt-top-thumb yt-top-thumb-ph"></div>'}
+            <div class="yt-top-info">
+              <div class="yt-top-title" title="${escapeHtml(v.title)}">${escapeHtml(v.title)}</div>
+              <div class="yt-top-stats">
+                <span>👁 ${fmtNum(v.views)}</span>
+                <span>⏱ ${v.avgPct!=null ? Math.round(v.avgPct)+'% watched' : '—'}</span>
+                <span>🖱 ${v.thumbCtr!=null ? Number(v.thumbCtr).toFixed(1)+'% CTR' : '—'}</span>
+              </div>
+            </div>
+          </a>
+        `).join('')}
+      </div>
+    `;
+  } else {
+    body = `<div class="sub">Connect to load discovery &amp; retention data.</div>`;
+  }
+  return `
+    <div class="report-panel">
+      <h3>YouTube — Discovery, Retention &amp; CTR</h3>
+      <div class="sub">Which videos are being discovered (and how), how much of them people watch, and thumbnail click-through rate.</div>
+      ${body}
+    </div>
+  `;
+}
+
+// Platforms not yet wired up for analytics. Facebook and TikTok require the user to create a
+// developer app on each platform and, for anything beyond basic public data, submit it for
+// app review before real numbers can flow — that's an external approval process only the
+// account owner can kick off, so this panel documents the concrete next step rather than
+// pretending a live integration exists.
+function renderComingSoonPlatformsPanel(){
+  return `
+    <div class="report-panel">
+      <h3>TikTok &amp; Facebook</h3>
+      <div class="sub">Not connected yet. Both require creating a developer app on the platform and — for anything beyond basic public numbers — submitting it for app review, which only the account owner can start. Once you have credentials, add them in Settings and let me know so I can wire up the live graphs.</div>
+      <div style="font-size:11.5px;color:var(--text-dim);line-height:1.6;">
+        <b>TikTok:</b> create an app at developers.tiktok.com, request the Content Posting / Research API scopes for video analytics (views, traffic source, average watch time), then apply for app review.<br>
+        <b>Facebook:</b> create an app at developers.facebook.com, add the Pages API, and request <code>pages_read_engagement</code> — a page you personally admin can be used in Development mode without review; broader team access needs Meta's App Review.
+      </div>
+    </div>
+  `;
+}
+
 function renderContentPerformance(company, hasYt, hasIg, igConfigured){
   let out = '<input type="file" id="thumbOverrideInput" accept="image/*" style="display:none">';
 
@@ -2748,6 +3043,8 @@ function renderContentPerformance(company, hasYt, hasIg, igConfigured){
             <div class="cc-stats">
               <span>❤️ <b>${fmtNum(m.likes)}</b></span>
               <span>💬 <b>${fmtNum(m.comments)}</b></span>
+              ${m.reach != null ? `<span>🔎 <b>${fmtNum(m.reach)}</b> reach</span>` : ''}
+              ${m.views != null ? `<span>👁 <b>${fmtNum(m.views)}</b></span>` : ''}
             </div>
           </div>
         </div>`;
@@ -2769,6 +3066,9 @@ function renderReportsModule(){
   }
   if(igConfigured && !state.igMediaCache[state.company]){
     tasks.push(loadInstagramForCompany(state.company));
+  }
+  if(ytAnalyticsTokenValid(state.company) && !state.ytAnalyticsData[state.company]){
+    tasks.push(loadYoutubeAnalyticsForCompany(state.company, state.reportsRange || '30'));
   }
   Promise.all(tasks).then(()=>{
     if(state.module === 'reports' && state.company === company.id) paintReportsModule();
@@ -2836,6 +3136,8 @@ function paintReportsModule(){
       ` : ''}
     </div>
 
+    ${hasYt ? renderYoutubeAnalyticsPanel(company) : ''}
+
     <div class="report-panel">
       <h3>Instagram</h3>
       <div class="sub">${hasIg ? 'Live stats via the Instagram Graph API (when configured), plus manual snapshots over time.' : 'Manual entry — logged snapshots over time (followers, reach, engagement).'}</div>
@@ -2853,6 +3155,8 @@ function paintReportsModule(){
 
     ${renderContentPerformance(company, hasYt, hasIg, igConfigured)}
 
+    ${renderComingSoonPlatformsPanel()}
+
     <div class="report-panel">
       <h3>Snapshot log</h3>
       <div class="sub">All logged data points for ${escapeHtml(company.name)}.</div>
@@ -2868,9 +3172,38 @@ function paintReportsModule(){
   drawLineChart($('#ytChart'), ytChartRows.map(r=>({ v:r.followers||0, label: fmtDate(r.period_date) })), { color:'#ef4444' });
   drawLineChart($('#igChart'), igChartRows.map(r=>({ v:r.followers||0, label: fmtDate(r.period_date) })), { color:'#ec4899' });
 
+  const ytaData = state.ytAnalyticsData[company.id];
+  if(ytaData && ytaData.status === 'ok'){
+    drawBarChart($('#ytTrafficChart'), ytaData.traffic.map(t=>({ v:t.views, label: ytTrafficLabel(t.source) })), { color:'#f59e0b' });
+    drawLineChart($('#ytRetentionChart'), ytaData.trend.map(t=>({ v:t.avgPct||0, label: fmtDate(t.date) })), { color:'#22c55e' });
+    drawLineChart($('#ytCtrChart'), ytaData.trend.map(t=>({ v:t.thumbCtr||0, label: fmtDate(t.date) })), { color:'#3b82f6' });
+  }
+
   $all('.range-tab', content).forEach(btn=>{
-    btn.addEventListener('click', ()=>{ state.reportsRange = btn.dataset.range; paintReportsModule(); });
+    btn.addEventListener('click', async ()=>{
+      state.reportsRange = btn.dataset.range;
+      if(ytAnalyticsTokenValid(company.id)){
+        await loadYoutubeAnalyticsForCompany(company.id, state.reportsRange);
+      }
+      if(state.module === 'reports' && state.company === company.id) paintReportsModule();
+    });
   });
+
+  const connectYtBtn = $('#connectYtAnalyticsBtn');
+  if(connectYtBtn) connectYtBtn.addEventListener('click', async ()=>{
+    connectYtBtn.disabled = true; connectYtBtn.textContent = 'Connecting…';
+    try{
+      await connectYoutubeAnalytics(company.id);
+      await loadYoutubeAnalyticsForCompany(company.id, state.reportsRange || '30');
+      if(state.module === 'reports' && state.company === company.id) paintReportsModule();
+    }catch(err){
+      console.error(err);
+      showToast(err.message || 'Failed to connect YouTube Analytics');
+      if(connectYtBtn){ connectYtBtn.disabled = false; connectYtBtn.textContent = "Connect " + company.name + "'s YouTube Analytics"; }
+    }
+  });
+  const ytoauthLink = $('#ytoauthSettingsLink');
+  if(ytoauthLink) ytoauthLink.addEventListener('click', (e)=>{ e.preventDefault(); openSettingsModal(); });
 
   const copyBtn = $('#copySummaryBtn');
   if(copyBtn) copyBtn.addEventListener('click', ()=>{
