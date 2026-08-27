@@ -945,7 +945,7 @@ async function connectYoutubeAnalytics(companyId){
         },
         error_callback: (err)=>{ reject(new Error((err && err.message) || 'Google sign-in was cancelled or failed')); },
       });
-      tokenClient.requestAccessToken({ prompt: '' });
+      tokenClient.requestAccessToken({ prompt: 'select_account' });
     }catch(err){ reject(err); }
   });
 }
