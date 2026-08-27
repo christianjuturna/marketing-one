@@ -979,13 +979,29 @@ async function loadYoutubeAnalyticsForCompany(companyId, rangeKey){
   const { startDate, endDate } = reportsRangeToDates(rangeKey);
   state.ytAnalyticsData[companyId] = { status:'loading' };
   try{
+    // videoThumbnailImpressions / videoThumbnailImpressionsClickRate are real YouTube Analytics
+    // metrics (added Jan 2026) but the interactive reports endpoint rejects every combination
+    // we've tried them in ("query not supported") for a regular channel-owner report — likely a
+    // rollout/report-type restriction, not something specific to our request shape. Fetch the
+    // metrics that reliably work first, then try the thumbnail ones separately and degrade
+    // gracefully (leave them null) instead of failing the whole panel if they 400.
     const [trafficJson, trendJson, videosJson] = await Promise.all([
       ytAnalyticsQuery(channelId, accessToken, { startDate, endDate, metrics:'views', dimensions:'insightTrafficSourceType', sort:'-views' }),
-      ytAnalyticsQuery(channelId, accessToken, { startDate, endDate, metrics:'views,averageViewDuration,averageViewPercentage,videoThumbnailImpressions,videoThumbnailImpressionsClickRate', dimensions:'day', sort:'day' }),
-      ytAnalyticsQuery(channelId, accessToken, { startDate, endDate, metrics:'views,averageViewPercentage,videoThumbnailImpressionsClickRate,estimatedMinutesWatched', dimensions:'video', sort:'-views', maxResults:'10' }),
+      ytAnalyticsQuery(channelId, accessToken, { startDate, endDate, metrics:'views,averageViewDuration,averageViewPercentage', dimensions:'day', sort:'day' }),
+      ytAnalyticsQuery(channelId, accessToken, { startDate, endDate, metrics:'views,averageViewPercentage,estimatedMinutesWatched', dimensions:'video', sort:'-views', maxResults:'10' }),
     ]);
+    let thumbTrendJson = null;
+    try{
+      thumbTrendJson = await ytAnalyticsQuery(channelId, accessToken, { startDate, endDate, metrics:'videoThumbnailImpressions,videoThumbnailImpressionsClickRate', dimensions:'day', sort:'day' });
+    }catch(err){ console.error('Thumbnail CTR not available for this channel/report shape', err); }
+    const thumbByDate = {};
+    if(thumbTrendJson) (thumbTrendJson.rows || []).forEach(r => { thumbByDate[r[0]] = { thumbImpr: r[1], thumbCtr: r[2] }; });
+
     const traffic = (trafficJson.rows || []).map(r => ({ source: r[0], views: r[1] }));
-    const trend = (trendJson.rows || []).map(r => ({ date:r[0], views:r[1], avgDuration:r[2], avgPct:r[3], thumbImpr:r[4], thumbCtr:r[5] }));
+    const trend = (trendJson.rows || []).map(r => {
+      const thumb = thumbByDate[r[0]] || {};
+      return { date:r[0], views:r[1], avgDuration:r[2], avgPct:r[3], thumbImpr: thumb.thumbImpr != null ? thumb.thumbImpr : null, thumbCtr: thumb.thumbCtr != null ? thumb.thumbCtr : null };
+    });
     const cache = state.ytCache[companyId];
     const byId = {};
     if(cache && cache.status === 'ok') cache.videos.forEach(v => { byId[v.id] = v; });
@@ -994,10 +1010,10 @@ async function loadYoutubeAnalyticsForCompany(companyId, rangeKey){
       const known = byId[vid];
       return {
         id: vid, title: known ? known.title : vid, thumb: known ? known.thumb : null, url: known ? known.url : ('https://www.youtube.com/watch?v='+vid),
-        views: r[1], avgPct: r[2], thumbCtr: r[3], minutesWatched: r[4],
+        views: r[1], avgPct: r[2], thumbCtr: null, minutesWatched: r[3],
       };
     });
-    state.ytAnalyticsData[companyId] = { status:'ok', traffic, trend, topVideos, loadedAt: Date.now() };
+    state.ytAnalyticsData[companyId] = { status:'ok', traffic, trend, topVideos, thumbCtrAvailable: !!thumbTrendJson, loadedAt: Date.now() };
   }catch(err){
     console.error(err);
     state.ytAnalyticsData[companyId] = { status:'error', error: err.message };
@@ -2920,6 +2936,7 @@ function renderYoutubeAnalyticsPanel(company){
     body = `<div class="sub" style="color:#ef4444;">${escapeHtml(data.error)}</div><button class="btn ghost small" id="connectYtAnalyticsBtn" style="margin-top:8px;">Reconnect</button>`;
   } else if(data.status === 'ok'){
     const lastTrend = data.trend[data.trend.length - 1];
+    const ctrAvailable = data.thumbCtrAvailable;
     body = `
       <div class="stat-grid">
         <div class="stat-tile"><div class="label">Avg. view duration</div><div class="value">${lastTrend ? fmtDuration(lastTrend.avgDuration) : '—'}</div></div>
@@ -2932,8 +2949,8 @@ function renderYoutubeAnalyticsPanel(company){
       <div class="section-heading" style="font-size:12.5px;margin:14px 0 6px;">Average retention over time</div>
       <div class="chart-wrap"><canvas id="ytRetentionChart" style="width:100%;height:160px;"></canvas></div>
       <div class="section-heading" style="font-size:12.5px;margin:14px 0 6px;">Thumbnail click-through rate over time</div>
-      <div class="chart-wrap"><canvas id="ytCtrChart" style="width:100%;height:160px;"></canvas></div>
-      <div class="section-heading" style="font-size:12.5px;margin:14px 0 6px;">Top videos this period — discovery, watch length &amp; CTR</div>
+      ${ctrAvailable ? `<div class="chart-wrap"><canvas id="ytCtrChart" style="width:100%;height:160px;"></canvas></div>` : `<div class="sub">Thumbnail impressions/CTR aren't returning data for this channel yet — YouTube rolled this metric out in January 2026 and it isn't available on every channel report yet. The rest of this panel (discovery, retention, watch time) is unaffected.</div>`}
+      <div class="section-heading" style="font-size:12.5px;margin:14px 0 6px;">Top videos this period — discovery &amp; watch length</div>
       <div class="yt-top-table">
         ${data.topVideos.length === 0 ? '<div class="sub">No video-level data for this period yet.</div>' : data.topVideos.map(v => `
           <a class="yt-top-row" href="${v.url}" target="_blank" rel="noopener">
@@ -2943,7 +2960,6 @@ function renderYoutubeAnalyticsPanel(company){
               <div class="yt-top-stats">
                 <span>👁 ${fmtNum(v.views)}</span>
                 <span>⏱ ${v.avgPct!=null ? Math.round(v.avgPct)+'% watched' : '—'}</span>
-                <span>🖱 ${v.thumbCtr!=null ? Number(v.thumbCtr).toFixed(1)+'% CTR' : '—'}</span>
               </div>
             </div>
           </a>
@@ -3176,7 +3192,9 @@ function paintReportsModule(){
   if(ytaData && ytaData.status === 'ok'){
     drawBarChart($('#ytTrafficChart'), ytaData.traffic.map(t=>({ v:t.views, label: ytTrafficLabel(t.source) })), { color:'#f59e0b' });
     drawLineChart($('#ytRetentionChart'), ytaData.trend.map(t=>({ v:t.avgPct||0, label: fmtDate(t.date) })), { color:'#22c55e' });
-    drawLineChart($('#ytCtrChart'), ytaData.trend.map(t=>({ v:t.thumbCtr||0, label: fmtDate(t.date) })), { color:'#3b82f6' });
+    if(ytaData.thumbCtrAvailable && $('#ytCtrChart')){
+      drawLineChart($('#ytCtrChart'), ytaData.trend.map(t=>({ v:t.thumbCtr||0, label: fmtDate(t.date) })), { color:'#3b82f6' });
+    }
   }
 
   $all('.range-tab', content).forEach(btn=>{
