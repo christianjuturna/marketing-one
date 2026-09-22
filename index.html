@@ -367,6 +367,30 @@
   .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#1f2430;border:1px solid var(--border);padding:10px 18px;border-radius:10px;font-size:13px;z-index:200;opacity:0;transition:opacity .2s ease;pointer-events:none;}
   .toast.show{opacity:1;}
 
+  /* ---------- Mobile layout ---------- */
+  @media (max-width: 760px){
+    .app-header{padding:12px 14px 0 14px;}
+    .app-title{font-size:16px;}
+    .company-tabs{gap:6px;}
+    .company-tab{padding:8px 12px;font-size:12.5px;}
+    .main-tabs{gap:14px;overflow-x:auto;-webkit-overflow-scrolling:touch;white-space:nowrap;}
+    .app-shell{flex-direction:column;}
+    .sidebar{position:static;width:100%;flex-direction:row;overflow-x:auto;-webkit-overflow-scrolling:touch;padding:10px 14px;gap:6px;top:auto;}
+    .module-tab{width:auto;white-space:nowrap;flex-shrink:0;}
+    .content{padding:16px 14px 60px 14px;}
+    .cal-layout{flex-direction:column;}
+    .cal-side{width:100%;position:static;max-height:none;}
+    .kanban{grid-template-columns:1fr;}
+    .row2{grid-template-columns:1fr;}
+    /* Posting Prep: stack each kit vertically so it's usable one-handed on a phone */
+    .prep-row{flex-direction:column;align-items:stretch;}
+    .prep-thumb{width:100%;height:160px;}
+    .prep-main{min-width:0;width:100%;}
+    .prep-caption{max-width:100%;white-space:normal;}
+    .prep-actions{width:100%;}
+    .prep-actions .btn{flex:1;min-width:120px;}
+  }
+
   .section-heading{font-size:12px;font-weight:800;letter-spacing:0.06em;text-transform:uppercase;color:var(--text-dim);margin:26px 0 12px 0;}
   .section-heading:first-child{margin-top:0;}
 
@@ -1038,6 +1062,38 @@ function fmtDate(d){
   if(!d) return '';
   const dt = new Date(d + 'T00:00:00');
   return dt.toLocaleDateString(undefined, { month:'short', day:'numeric' });
+}
+// Media files live on Supabase storage (a different origin than this app), and browsers —
+// mobile Safari especially — ignore the <a download> attribute on cross-origin links, so a
+// plain link just opens the file instead of saving it. Fetching it ourselves and downloading
+// the resulting same-origin blob URL works reliably on both desktop and phone browsers. If the
+// fetch itself fails (e.g. offline), fall back to opening the file so it can still be saved
+// manually (long-press → Save Image/Video on mobile).
+async function downloadFileFromUrl(url, filename){
+  try{
+    const res = await fetch(url);
+    if(!res.ok) throw new Error('Download failed (' + res.status + ')');
+    const blob = await res.blob();
+    const objUrl = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = objUrl;
+    a.download = filename || 'file';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(()=> URL.revokeObjectURL(objUrl), 15000);
+  }catch(err){
+    console.error(err);
+    window.open(url, '_blank');
+    showToast('Couldn’t auto-download — opened the file instead, save it from there');
+  }
+}
+function filenameFromUrl(url, fallback){
+  try{
+    const clean = url.split('?')[0].split('#')[0];
+    const last = clean.substring(clean.lastIndexOf('/') + 1);
+    return last || fallback;
+  }catch(err){ return fallback; }
 }
 function isVideoType(mediaType){ return mediaType === 'video'; }
 function guessTypeFromMime(mime){
@@ -2245,11 +2301,13 @@ function renderPrep(){
       const items = mediaItemsOf(p);
       const firstUpload = items.find(it => it.type === 'upload');
       const thumbSrc = p.thumbnail_url || (firstUpload ? firstUpload.url : '');
+      const uploadItems = items.filter(it => it.type === 'upload');
       const mediaButtons = items.map((it, i) => {
+        const label = `Media${items.length>1 ? ' ' + (i+1) : ''}`;
         if(it.type === 'upload'){
-          return `<a class="btn ghost small" href="${it.url}" target="_blank" download>Media ${items.length>1 ? i+1 : ''}</a>`;
+          return `<button class="btn ghost small dl-media" data-url="${escapeHtml(it.url)}" data-name="${escapeHtml(filenameFromUrl(it.url, 'media-'+(i+1)))}">${label}</button>`;
         }
-        return `<a class="btn ghost small" href="${it.url}" target="_blank">Link ${items.length>1 ? i+1 : ''}</a>`;
+        return `<a class="btn ghost small" href="${it.url}" target="_blank">Link${items.length>1 ? ' ' + (i+1) : ''}</a>`;
       }).join('');
       html += `
         <div class="prep-row" data-id="${p.id}">
@@ -2266,8 +2324,10 @@ function renderPrep(){
           <div class="prep-actions">
             <button class="btn ghost small copy-caption">Copy caption</button>
             <button class="btn ghost small copy-hashtags">Copy hashtags</button>
+            <button class="btn ghost small copy-both">Copy caption + hashtags</button>
+            ${uploadItems.length>1 ? `<button class="btn ghost small dl-all">Download all media (${uploadItems.length})</button>` : ''}
             ${mediaButtons}
-            ${p.thumbnail_url ? `<a class="btn ghost small" href="${p.thumbnail_url}" target="_blank" download>Thumbnail</a>` : ''}
+            ${p.thumbnail_url ? `<button class="btn ghost small dl-thumb" data-url="${escapeHtml(p.thumbnail_url)}" data-name="${escapeHtml(filenameFromUrl(p.thumbnail_url, 'thumbnail'))}">Thumbnail</button>` : ''}
             <button class="btn small mark-posted">Mark posted</button>
             <button class="btn ghost small edit-row">Edit</button>
           </div>
@@ -2287,6 +2347,29 @@ function renderPrep(){
     });
     $('.copy-hashtags', row).addEventListener('click', ()=>{
       navigator.clipboard.writeText(post.hashtags||'').then(()=> showToast('Hashtags copied'));
+    });
+    $('.copy-both', row).addEventListener('click', ()=>{
+      const combined = [post.caption||'', post.hashtags||''].filter(Boolean).join('\n\n');
+      navigator.clipboard.writeText(combined).then(()=> showToast('Caption + hashtags copied'));
+    });
+    $all('.dl-media', row).forEach(btn=>{
+      btn.addEventListener('click', ()=>{
+        showToast('Downloading…');
+        downloadFileFromUrl(btn.dataset.url, btn.dataset.name);
+      });
+    });
+    const dlThumbBtn = $('.dl-thumb', row);
+    if(dlThumbBtn) dlThumbBtn.addEventListener('click', ()=>{
+      showToast('Downloading…');
+      downloadFileFromUrl(dlThumbBtn.dataset.url, dlThumbBtn.dataset.name);
+    });
+    const dlAllBtn = $('.dl-all', row);
+    if(dlAllBtn) dlAllBtn.addEventListener('click', async ()=>{
+      const uploads = mediaItemsOf(post).filter(it => it.type === 'upload');
+      showToast(`Downloading ${uploads.length} files…`);
+      for(let i=0;i<uploads.length;i++){
+        await downloadFileFromUrl(uploads[i].url, filenameFromUrl(uploads[i].url, 'media-'+(i+1)));
+      }
     });
     $('.edit-row', row).addEventListener('click', ()=> openEditor(id));
     $('.mark-posted', row).addEventListener('click', async ()=>{
